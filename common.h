@@ -18,3 +18,6 @@ typedef int64_t i64;
 typedef uint64_t u64;
 typedef float f32;
 typedef double f64;
+
+
+#define force_inline __attribute__((always_inline)) inline
