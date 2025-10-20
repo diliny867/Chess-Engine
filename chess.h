@@ -21,9 +21,12 @@ typedef enum {
     BISHOP,
     ROOK,
     QUEEN,
-    KING
+    KING,
+    PIECE_COUNT
 } piece_e;
 typedef i32 piece_t;
+
+#define NO_PIECE    -1
 
 // #define PAWN   0
 // #define KNIGHT 1
@@ -32,20 +35,14 @@ typedef i32 piece_t;
 // #define QUEEN  4
 // #define KING   5
 
-typedef enum {
-    LEFT = 0,
-    RIGHT,
-    UP,
-    DOWN,
-    LEFT_UP,
-    LEFT_DOWN,
-    RIGHT_UP,
-    RIGHT_DOWN
-} direction_t;
+typedef enum{
+    CWHITE = 0,
+    CBLACK = 1,
+    CCOLOR_COUNT
+} color_e;
 
+#define NUL_INDEX -1
 
-#define PWHITE 0
-#define PBLACK 1
 
 #define RANK_1 0x00000000000000ff
 #define RANK_2 0x000000000000ff00
@@ -69,15 +66,16 @@ typedef enum {
 #define FILE_GH 0xC0C0C0C0C0C0C0C0
 
 
-#define PUT_BIT(value, mask)      ((value) |=  (mask))
-#define TOGGLE_BIT(value, mask)   ((value) ^=  (mask))
-#define CLEAR_BIT(value, mask)    ((value) &= ~(mask))
-#define GET_BIT(value, mask)      ((value) &   (mask))
+#define PUT_BITS(value, mask)      ((value) |=  (mask))
+#define AND_BITS(value, mask)      ((value) &=  (mask))
+#define TOGGLE_BITS(value, mask)   ((value) ^=  (mask))
+#define CLEAR_BITS(value, mask)    ((value) &= ~(mask))
+#define GET_BITS(value, mask)      ((value) &   (mask))
 
-#define PUT_BITI(value, index)    PUT_BIT((value),    1ull << (index))
-#define TOGGLE_BITI(value, index) TOGGLE_BIT((value), 1ull << (index))
-#define CLEAR_BITI(value, index)  CLEAR_BIT((value),  1ull << (index))
-#define GET_BITI(value, index)    GET_BIT((value),    1ull << (index))
+#define PUT_BIT(value, index)    PUT_BITS((value),    1ull << (index))
+#define TOGGLE_BIT(value, index) TOGGLE_BITS((value), 1ull << (index))
+#define CLEAR_BIT(value, index)  CLEAR_BITS((value),  1ull << (index))
+#define GET_BIT(value, index)    GET_BITS((value),    1ull << (index))
 
 #define PAWN_VALUE   100
 #define KNIGHT_VALUE 295
@@ -93,84 +91,95 @@ i64 piece_values[6] = { PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_VALUE, QUEE
 
 // i8 direction_index[8] = { -1, 1, 8, -8, 7, -9, 9, -7 }; 
 
-u64 directions[2][8] = { 0 };    // white / black
-u64 pieces[2][6] = { 0 };        // white / black
+u64 pieces[PIECE_COUNT] = { 0 };
+u64 colors[CCOLOR_COUNT] = { 0 };
 
 bool can_castle = true;
 
 bool blacks_turn = false;
 
-i32 selected_index = -1;
-piece_t selected_piece = -1;
-piece_t dragged_piece = -1;
+i32 selected_index = NUL_INDEX;
+piece_t selected_piece = NO_PIECE;
+piece_t dragged_piece = NO_PIECE;
 bool selected_black = false;
 u64 selected_turns = 0;
 
 
-force_inline u64 full_mask8(u64 arr[]){
-    return arr[0] | arr[1] | arr[2] | arr[3] | arr[4] | arr[5] | arr[6] | arr[7];
-}
-force_inline u64 full_mask6(u64 arr[]){
-    return arr[0] | arr[1] | arr[2] | arr[3] | arr[4] | arr[5];
-}
-force_inline u64 get_attacks(bool black) {
-    return full_mask8(directions[black]);
-}
-force_inline u64 get_pieces(bool black) {
-    return full_mask6(pieces[black]);
-}
+// force_inline u64 full_mask8(u64 arr[]){
+//     return arr[0] | arr[1] | arr[2] | arr[3] | arr[4] | arr[5] | arr[6] | arr[7];
+// }
+// force_inline u64 full_mask6(u64 arr[]){
+//     return arr[0] | arr[1] | arr[2] | arr[3] | arr[4] | arr[5];
+// }
+// force_inline u64 get_pieces(bool black) {
+//     return full_mask6(pieces[black]);
+// }
 force_inline u64 get_all_pieces() {
-    return get_pieces(0) | get_pieces(1);
+    return colors[CWHITE] | colors[CBLACK];
 }
 
-#define PIECE_CHECK(pcs, mask, piece) (!!(pcs[(piece)] & (mask)))
-#define PIECE_HERE(pcs, mask, piece) (PIECE_CHECK(pcs, mask, piece) * (piece))
+#define PIECE_CHECK(pcs, mask, piece)  (!!(pcs[(piece)] & (mask)))
+#define PIECE_HERE(pcs, mask, piece)   (PIECE_CHECK(pcs, mask, piece) * (piece))
 #define __PIECE_HERE(pcs, mask, piece) (PIECE_CHECK(pcs, mask, piece) * (piece + 1))
 force_inline piece_t find_piece(bool black, i32 index){
-    u64 mask = 1ull << index;
-    u64* pcs = pieces[black];
+    u64 mask = colors[black] & (1ull << index);
     // +1 so it will be -1 if no pieces are found
-    i32 val = __PIECE_HERE(pcs, mask, PAWN) + __PIECE_HERE(pcs, mask, KNIGHT) + __PIECE_HERE(pcs, mask, BISHOP) 
-            + __PIECE_HERE(pcs, mask, ROOK) + __PIECE_HERE(pcs, mask, QUEEN)  + __PIECE_HERE(pcs, mask, KING);
+    i32 val = __PIECE_HERE(pieces, mask, PAWN) + __PIECE_HERE(pieces, mask, KNIGHT) + __PIECE_HERE(pieces, mask, BISHOP) 
+            + __PIECE_HERE(pieces, mask, ROOK) + __PIECE_HERE(pieces, mask, QUEEN)  + __PIECE_HERE(pieces, mask, KING);
     return val - 1;
 } 
+// #define PIECE_HERE(pcs, mask, piece) (!!(pcs[(piece)] & (mask)) * piece)
+// force_inline piece_t find_piece(bool black, i32 index){
+//     u64 mask = colors[black] & (1ull << index);
+//     return PIECE_HERE(pieces, mask, PAWN) + PIECE_HERE(pieces, mask, KNIGHT) + PIECE_HERE(pieces, mask, BISHOP) 
+//          + PIECE_HERE(pieces, mask, ROOK) + PIECE_HERE(pieces, mask, QUEEN)  + PIECE_HERE(pieces, mask, KING);
+// } 
+
 force_inline piece_t find_piece_all(i32 index, bool* black){
-    piece_t piece = find_piece(PWHITE, index);
-    if(piece != -1){
-        *black = PWHITE;
+    piece_t piece = find_piece(CWHITE, index);
+    if(piece != NO_PIECE){
+        *black = CWHITE;
         return piece;
     }
-    *black = PBLACK;
-    return find_piece(PBLACK, index);
+    *black = CBLACK;
+    return find_piece(CBLACK, index);
 }
 force_inline void put_piece(bool black, piece_t piece, i32 index){
-    PUT_BITI(pieces[black][piece], index);
+    PUT_BIT(pieces[piece], index);
+    PUT_BIT(colors[black], index);
 }
 force_inline void move_piece(bool black, piece_t piece, i32 from, i32 to){
-    CLEAR_BITI(pieces[black][piece], from);
-    PUT_BITI(pieces[black][piece], to);
-    for(i32 i = 0; i <= KING; i++){
-        CLEAR_BITI(pieces[!black][i], to);
+    CLEAR_BIT(pieces[piece], from);
+    CLEAR_BIT(colors[black], from);
+    u64 to_mask = 1ull << to;
+    CLEAR_BITS(colors[!black], to_mask);
+    for(i32 i = 0; i < PIECE_COUNT; i++){
+        CLEAR_BITS(pieces[i], to_mask);
     }
+    PUT_BITS(pieces[piece], to_mask);
+    PUT_BITS(colors[black], to_mask);
 }
 force_inline void move_piece_unknown(bool black, i32 from, i32 to){
     piece_t piece = find_piece(black, from);
-    assert(piece != -1);
+    assert(piece != NO_PIECE);
     move_piece(black, piece, from, to);
 }
 
 force_inline void put_piece_m(bool black, piece_t piece, u64 mask){
-    PUT_BIT(pieces[black][piece], mask);
+    PUT_BITS(pieces[piece], mask);
+    PUT_BITS(colors[black], mask);
 }
 force_inline void move_piece_m(bool black, piece_t piece, u64 m_from, u64 m_to){
-    CLEAR_BIT(pieces[black][piece], m_from);
-    PUT_BIT(pieces[black][piece], m_to);
+    CLEAR_BITS(pieces[piece], m_from);
+    CLEAR_BITS(colors[black], m_from);
+    PUT_BITS(pieces[piece], m_to);
+    PUT_BITS(colors[black], m_to);
 }
 
 force_inline u64 get_turns_m(i32 index, bool black, piece_t piece){
     u64 mask = 0;
-    u64 color_pieces = get_pieces(black);
-    u64 other_pieces = get_pieces(!black);
+    u64 color_pieces = colors[black];
+    u64 other_pieces = colors[!black];
     u64 all_pieces = color_pieces | other_pieces;
     u64 empties = ~all_pieces;
     u64 bit = 1ull << index;
@@ -214,12 +223,12 @@ i64 evaluate_values() {
     u64 piece_mask;
     i32 piece_index;
     for(i32 i = 0; i <= KING; i++){
-        piece_mask = directions[PWHITE][i];
+        piece_mask = pieces[i] & colors[CWHITE];
         while(piece_mask){
             piece_index = extract_piece(&piece_mask);
             value += piece_values[i];
         }
-        piece_mask = directions[PBLACK][i];
+        piece_mask = pieces[i] & colors[CBLACK];
         while(piece_mask){
             piece_index = extract_piece(&piece_mask);
             value -= piece_values[i];
@@ -230,44 +239,39 @@ i64 evaluate_values() {
 
 
 void clear_board(){
-    memset(directions, 0, sizeof(directions));
     memset(pieces, 0, sizeof(pieces));
+    memset(colors, 0, sizeof(colors));
 }
 void setup_board(){
     clear_board();
     for(i32 i = 0; i < 8; i++){
-        put_piece(PWHITE, PAWN, 8 + i);
+        put_piece(CWHITE, PAWN, 8 + i);
     }
-    put_piece(PWHITE, ROOK, 0);
-    put_piece(PWHITE, ROOK, 7);
-    put_piece(PWHITE, KNIGHT, 1);
-    put_piece(PWHITE, KNIGHT, 6);
-    put_piece(PWHITE, BISHOP, 2);
-    put_piece(PWHITE, BISHOP, 5);
-    put_piece(PWHITE, QUEEN, 3);
-    put_piece(PWHITE, KING, 4);
+    put_piece(CWHITE, ROOK, 0);
+    put_piece(CWHITE, ROOK, 7);
+    put_piece(CWHITE, KNIGHT, 1);
+    put_piece(CWHITE, KNIGHT, 6);
+    put_piece(CWHITE, BISHOP, 2);
+    put_piece(CWHITE, BISHOP, 5);
+    put_piece(CWHITE, QUEEN, 3);
+    put_piece(CWHITE, KING, 4);
 
     for(i32 i = 0; i < 8; i++){
-        put_piece(PBLACK, PAWN, 48 + i);
+        put_piece(CBLACK, PAWN, 48 + i);
     }
-    put_piece(PBLACK, ROOK, 56);
-    put_piece(PBLACK, ROOK, 63);
-    put_piece(PBLACK, KNIGHT, 57);
-    put_piece(PBLACK, KNIGHT, 62);
-    put_piece(PBLACK, BISHOP, 58);
-    put_piece(PBLACK, BISHOP, 61);
-    put_piece(PBLACK, QUEEN, 59);
-    put_piece(PBLACK, KING, 60);
+    put_piece(CBLACK, ROOK, 56);
+    put_piece(CBLACK, ROOK, 63);
+    put_piece(CBLACK, KNIGHT, 57);
+    put_piece(CBLACK, KNIGHT, 62);
+    put_piece(CBLACK, BISHOP, 58);
+    put_piece(CBLACK, BISHOP, 61);
+    put_piece(CBLACK, QUEEN, 59);
+    put_piece(CBLACK, KING, 60);
 
-    for(i32 i = 0; i <= 1; i++){
-        for(i32 j = 0; j <= KING; j++){
-            printf("%d\n", pieces[i][j]);
-        }
-    }
 
-    put_piece(PWHITE, KNIGHT, 36);
-    put_piece(PWHITE, PAWN, 20);
-    put_piece(PBLACK, PAWN, 21);
+    put_piece(CWHITE, KNIGHT, 36);
+    put_piece(CWHITE, PAWN, 20);
+    put_piece(CBLACK, PAWN, 21);
 
     printf("\n\n\n\n\n");
 }
@@ -279,7 +283,7 @@ bool mouse_left = false;
 bool mouse_right = false;
 
 // 128x128
-Texture2D piece_textures[2][6];
+Texture2D piece_textures[CCOLOR_COUNT][PIECE_COUNT];
 
 Sound capture_sound;
 Sound move_sound;
@@ -306,18 +310,18 @@ Texture2D load_texture(char* file_path){
 }
 
 void load_assets(){
-    piece_textures[PWHITE][PAWN]   = load_texture("resources/white-pawn.png");
-    piece_textures[PBLACK][PAWN]   = load_texture("resources/black-pawn.png");
-    piece_textures[PWHITE][KNIGHT] = load_texture("resources/white-knight.png");
-    piece_textures[PBLACK][KNIGHT] = load_texture("resources/black-knight.png");
-    piece_textures[PWHITE][BISHOP] = load_texture("resources/white-bishop.png");
-    piece_textures[PBLACK][BISHOP] = load_texture("resources/black-bishop.png");
-    piece_textures[PWHITE][ROOK]   = load_texture("resources/white-rook.png");
-    piece_textures[PBLACK][ROOK]   = load_texture("resources/black-rook.png");
-    piece_textures[PWHITE][QUEEN]  = load_texture("resources/white-queen.png");
-    piece_textures[PBLACK][QUEEN]  = load_texture("resources/black-queen.png");
-    piece_textures[PWHITE][KING]   = load_texture("resources/white-king.png");
-    piece_textures[PBLACK][KING]   = load_texture("resources/black-king.png");
+    piece_textures[CWHITE][PAWN]   = load_texture("resources/white-pawn.png");
+    piece_textures[CBLACK][PAWN]   = load_texture("resources/black-pawn.png");
+    piece_textures[CWHITE][KNIGHT] = load_texture("resources/white-knight.png");
+    piece_textures[CBLACK][KNIGHT] = load_texture("resources/black-knight.png");
+    piece_textures[CWHITE][BISHOP] = load_texture("resources/white-bishop.png");
+    piece_textures[CBLACK][BISHOP] = load_texture("resources/black-bishop.png");
+    piece_textures[CWHITE][ROOK]   = load_texture("resources/white-rook.png");
+    piece_textures[CBLACK][ROOK]   = load_texture("resources/black-rook.png");
+    piece_textures[CWHITE][QUEEN]  = load_texture("resources/white-queen.png");
+    piece_textures[CBLACK][QUEEN]  = load_texture("resources/black-queen.png");
+    piece_textures[CWHITE][KING]   = load_texture("resources/white-king.png");
+    piece_textures[CBLACK][KING]   = load_texture("resources/black-king.png");
 
     capture_sound = LoadSound("resources/capture.mp3");
     move_sound = LoadSound("resources/move-self.mp3");
@@ -368,22 +372,22 @@ void draw_attacks(u64 mask){
     }
 }
 void draw_pieces(){
-    for(i32 i = 0; i <= 1; i++){
-        for(i32 j = 0; j <= KING; j++){
-            draw_pieces_mask(pieces[i][j], i, j);
+    for(i32 i = 0; i < CCOLOR_COUNT; i++){
+        for(i32 j = PAWN; j < PIECE_COUNT; j++){
+            draw_pieces_mask(pieces[j] & colors[i], i, j);
         }
     }
 }
 void draw_selected(){
-    if(selected_index != -1){
+    if(selected_index != NUL_INDEX){
         draw_square_by_index(selected_index, SELECTED_TINT);
         draw_attacks(selected_turns);
     }
     i32 hover_index;
-    if(dragged_piece != -1){
+    if(dragged_piece != NO_PIECE){
         draw_piece(mouse_x - HALF_SQUARE_SIDE, mouse_y - HALF_SQUARE_SIDE, selected_black, dragged_piece);
         hover_index = position_to_index(mouse_x, mouse_y);
-        if(GET_BITI(selected_turns, hover_index)){
+        if(GET_BIT(selected_turns, hover_index)){
             draw_square_by_index(hover_index, SELECTED_HOVER);
         }
     }
@@ -421,8 +425,8 @@ void chess_init(){
 }
 
 void chess_clean(){
-    for(i32 i = 0; i <= 1; i++){
-        for(i32 j = 0; j <= KING; j++){
+    for(i32 i = 0; i < CCOLOR_COUNT; i++){
+        for(i32 j = PAWN; j < PIECE_COUNT; j++){
             UnloadTexture(piece_textures[i][j]);
         }
     }
@@ -437,18 +441,18 @@ void chess_clean(){
 }
 
 bool can_move(i32 new_index){
-    return GET_BITI(selected_turns, new_index) && selected_black == blacks_turn;
+    return GET_BIT(selected_turns, new_index) && selected_black == blacks_turn;
 }
 
 void do_move(i32 new_index){
-    if(GET_BITI(get_pieces(!selected_black), new_index)){
+    if(GET_BIT(colors[!selected_black], new_index)){
         PlaySound(capture_sound);
     }else{
         PlaySound(move_sound);
     }
     move_piece(selected_black, selected_piece, selected_index, new_index);
-    selected_index = -1;
-    selected_piece = -1;
+    selected_index = NUL_INDEX;
+    selected_piece = NO_PIECE;
     blacks_turn = !blacks_turn;
 }
 
@@ -461,12 +465,12 @@ void poll_events(){
     i32 new_index = position_to_index(mouse_x, mouse_y);
     
     if(IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)){
-        selected_index = -1;
-        selected_piece = -1;
+        selected_index = NUL_INDEX;
+        selected_piece = NO_PIECE;
     }
 
     if(IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){
-        if(new_index != selected_index && selected_piece != -1 && can_move(new_index)){
+        if(new_index != selected_index && selected_piece != NO_PIECE && can_move(new_index)){
             do_move(new_index);
         }else{
             selected_index = new_index;
@@ -476,10 +480,10 @@ void poll_events(){
         }
     }
     if(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)){
-        if(new_index != selected_index && dragged_piece != -1 && can_move(new_index)){
+        if(new_index != selected_index && dragged_piece != NO_PIECE && can_move(new_index)){
             do_move(new_index);
         }
-        dragged_piece = -1;    
+        dragged_piece = NO_PIECE;
     }
     
     if(IsKeyPressed(KEY_SPACE)){
