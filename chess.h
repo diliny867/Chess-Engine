@@ -96,10 +96,13 @@ i64 piece_values[6] = { PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_VALUE, QUEE
 u64 directions[2][8] = { 0 };    // white / black
 u64 pieces[2][6] = { 0 };        // white / black
 
+bool can_castle = true;
+
 bool blacks_turn = false;
 
 i32 selected_index = -1;
 piece_t selected_piece = -1;
+piece_t dragged_piece = -1;
 bool selected_black = false;
 u64 selected_turns = 0;
 
@@ -146,6 +149,9 @@ force_inline void put_piece(bool black, piece_t piece, i32 index){
 force_inline void move_piece(bool black, piece_t piece, i32 from, i32 to){
     CLEAR_BITI(pieces[black][piece], from);
     PUT_BITI(pieces[black][piece], to);
+    for(i32 i = 0; i <= KING; i++){
+        CLEAR_BITI(pieces[!black][i], to);
+    }
 }
 force_inline void move_piece_unknown(bool black, i32 from, i32 to){
     piece_t piece = find_piece(black, from);
@@ -163,20 +169,24 @@ force_inline void move_piece_m(bool black, piece_t piece, u64 m_from, u64 m_to){
 
 force_inline u64 get_turns_m(i32 index, bool black, piece_t piece){
     u64 mask = 0;
-    u64 targets = ~get_pieces(black);
+    u64 color_pieces = get_pieces(black);
+    u64 other_pieces = get_pieces(!black);
+    u64 all_pieces = color_pieces | other_pieces;
+    u64 empties = ~all_pieces;
     u64 bit = 1ull << index;
     switch (piece){
-    case PAWN:
-        targets &= ~((bit << 8) | (bit >> 8));
-        mask = ((bit << 7 & ~FILE_H) | (bit << 8) | (bit << 9 & ~FILE_A)) & ~black
-             | ((bit >> 7 & ~FILE_A) | (bit >> 8) | (bit >> 9 & ~FILE_H)) & ~!black;
+    case PAWN: //todo: enpassant
+        mask =  (((bit << 7 & ~FILE_H) | (bit << 9 & ~FILE_A)) &  (black - 1llu)                     //white side attacks
+             |   ((bit >> 7 & ~FILE_A) | (bit >> 9 & ~FILE_H)) & ~(black - 1llu)) & other_pieces     //black side attacks
+             | (((bit << 8) | ((bit & RANK_2) << 16) & (empties << 8)) &  (black - 1llu)             //white side steps
+             |  ((bit >> 8) | ((bit & RANK_7) >> 16) & (empties >> 8)) & ~(black - 1llu)) & empties; //black side steps
         break;
     case KNIGHT:
-        mask = (bit << 6 & ~FILE_GH) | (bit << 10 & ~FILE_AB) | (bit << 15 & ~FILE_GH) | (bit << 17 & ~FILE_AB)
-             | (bit >> 6 & ~FILE_AB) | (bit >> 10 & ~FILE_GH) | (bit >> 15 & ~FILE_AB) | (bit >> 17 & ~FILE_GH);
+        mask = ((bit << 6 & ~FILE_GH) | (bit << 10 & ~FILE_AB) | (bit << 15 & ~FILE_H) | (bit << 17 & ~FILE_A)
+             |  (bit >> 6 & ~FILE_AB) | (bit >> 10 & ~FILE_GH) | (bit >> 15 & ~FILE_A) | (bit >> 17 & ~FILE_H)) & ~color_pieces;
         break;
     case BISHOP:
-
+        
         break;
     case ROOK:
 
@@ -184,12 +194,12 @@ force_inline u64 get_turns_m(i32 index, bool black, piece_t piece){
     case QUEEN:
 
         break;
-    case KING:
-        mask = (bit>>1 & ~FILE_H) | (bit>>7 & ~FILE_A) | (bit>>8) | (bit>>9 & ~FILE_H)
-             | (bit<<1 & ~FILE_A) | (bit<<7 & ~FILE_H) | (bit<<8) | (bit<<9 & ~FILE_A);
+    case KING: //todo: castling
+        mask = ((bit << 1 & ~FILE_A) | (bit << 7 & ~FILE_H) | (bit << 8) | (bit << 9 & ~FILE_A)
+             |  (bit >> 1 & ~FILE_H) | (bit >> 7 & ~FILE_A) | (bit >> 8) | (bit >> 9 & ~FILE_H)) & ~color_pieces;
         break;
     }
-    return mask & targets;
+    return mask;
 }
 force_inline i32 pop_lsb(u64* val){
     i32 i = LSB_ZEROS(*val);
@@ -225,8 +235,9 @@ void clear_board(){
 }
 void setup_board(){
     clear_board();
-    for(i32 i = 0; i < 8; i++)
+    for(i32 i = 0; i < 8; i++){
         put_piece(PWHITE, PAWN, 8 + i);
+    }
     put_piece(PWHITE, ROOK, 0);
     put_piece(PWHITE, ROOK, 7);
     put_piece(PWHITE, KNIGHT, 1);
@@ -236,8 +247,9 @@ void setup_board(){
     put_piece(PWHITE, QUEEN, 3);
     put_piece(PWHITE, KING, 4);
 
-    for(i32 i = 0; i < 8; i++)
+    for(i32 i = 0; i < 8; i++){
         put_piece(PBLACK, PAWN, 48 + i);
+    }
     put_piece(PBLACK, ROOK, 56);
     put_piece(PBLACK, ROOK, 63);
     put_piece(PBLACK, KNIGHT, 57);
@@ -254,6 +266,8 @@ void setup_board(){
     }
 
     put_piece(PWHITE, KNIGHT, 36);
+    put_piece(PWHITE, PAWN, 20);
+    put_piece(PBLACK, PAWN, 21);
 
     printf("\n\n\n\n\n");
 }
@@ -267,6 +281,10 @@ bool mouse_right = false;
 // 128x128
 Texture2D piece_textures[2][6];
 
+Sound capture_sound;
+Sound move_sound;
+Sound notify_sound;
+
 #define SCREEN_WIDTH     800
 #define SCREEN_HEIGHT    800
 
@@ -277,6 +295,7 @@ Texture2D piece_textures[2][6];
 #define COLOR_DARK     (Color){0xD2, 0x8C, 0x45, 0xFF}
 
 #define SELECTED_TINT  (Color){0x71, 0x81, 0x68, 0x7F}
+#define SELECTED_HOVER (Color){0x71, 0x81, 0x68, 0x5F}
 #define SELECTED_BLANK (Color){0x71, 0x81, 0x68, 0x00}
 #define SELECTED_COLOR (Color){0x71, 0x81, 0x68, 0xFF}
 
@@ -287,18 +306,6 @@ Texture2D load_texture(char* file_path){
 }
 
 void load_assets(){
-    // piece_textures[PWHITE][PAWN]   = LoadTexture("resources/Chess_plt60.png");
-    // piece_textures[PBLACK][PAWN]   = LoadTexture("resources/Chess_pdt60.png");
-    // piece_textures[PWHITE][KNIGHT] = LoadTexture("resources/Chess_nlt60.png");
-    // piece_textures[PBLACK][KNIGHT] = LoadTexture("resources/Chess_ndt60.png");
-    // piece_textures[PWHITE][BISHOP] = LoadTexture("resources/Chess_blt60.png");
-    // piece_textures[PBLACK][BISHOP] = LoadTexture("resources/Chess_bdt60.png");
-    // piece_textures[PWHITE][ROOK]   = LoadTexture("resources/Chess_rlt60.png");
-    // piece_textures[PBLACK][ROOK]   = LoadTexture("resources/Chess_rdt60.png");
-    // piece_textures[PWHITE][QUEEN]  = LoadTexture("resources/Chess_qlt60.png");
-    // piece_textures[PBLACK][QUEEN]  = LoadTexture("resources/Chess_qdt60.png");
-    // piece_textures[PWHITE][KING]   = LoadTexture("resources/Chess_klt60.png");
-    // piece_textures[PBLACK][KING]   = LoadTexture("resources/Chess_kdt60.png");
     piece_textures[PWHITE][PAWN]   = load_texture("resources/white-pawn.png");
     piece_textures[PBLACK][PAWN]   = load_texture("resources/black-pawn.png");
     piece_textures[PWHITE][KNIGHT] = load_texture("resources/white-knight.png");
@@ -311,6 +318,10 @@ void load_assets(){
     piece_textures[PBLACK][QUEEN]  = load_texture("resources/black-queen.png");
     piece_textures[PWHITE][KING]   = load_texture("resources/white-king.png");
     piece_textures[PBLACK][KING]   = load_texture("resources/black-king.png");
+
+    capture_sound = LoadSound("resources/capture.mp3");
+    move_sound = LoadSound("resources/move-self.mp3");
+    notify_sound = LoadSound("resources/notify.mp3");
 }
 
 void index_to_position(i32 index, i32* x, i32* y){
@@ -368,8 +379,13 @@ void draw_selected(){
         draw_square_by_index(selected_index, SELECTED_TINT);
         draw_attacks(selected_turns);
     }
-    if(selected_piece != -1){
-        draw_piece(mouse_x - HALF_SQUARE_SIDE, mouse_y - HALF_SQUARE_SIDE, selected_black, selected_piece);
+    i32 hover_index;
+    if(dragged_piece != -1){
+        draw_piece(mouse_x - HALF_SQUARE_SIDE, mouse_y - HALF_SQUARE_SIDE, selected_black, dragged_piece);
+        hover_index = position_to_index(mouse_x, mouse_y);
+        if(GET_BITI(selected_turns, hover_index)){
+            draw_square_by_index(hover_index, SELECTED_HOVER);
+        }
     }
 }
 void draw_board() {
@@ -397,6 +413,8 @@ void chess_init(){
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Chess");
 
+    InitAudioDevice();
+
     SetTargetFPS(60);
 
     load_assets();
@@ -408,6 +426,30 @@ void chess_clean(){
             UnloadTexture(piece_textures[i][j]);
         }
     }
+
+    UnloadSound(capture_sound);
+    UnloadSound(move_sound);
+    UnloadSound(notify_sound);
+
+    CloseAudioDevice();
+
+    CloseWindow();
+}
+
+bool can_move(i32 new_index){
+    return GET_BITI(selected_turns, new_index) && selected_black == blacks_turn;
+}
+
+void do_move(i32 new_index){
+    if(GET_BITI(get_pieces(!selected_black), new_index)){
+        PlaySound(capture_sound);
+    }else{
+        PlaySound(move_sound);
+    }
+    move_piece(selected_black, selected_piece, selected_index, new_index);
+    selected_index = -1;
+    selected_piece = -1;
+    blacks_turn = !blacks_turn;
 }
 
 void poll_events(){
@@ -416,36 +458,28 @@ void poll_events(){
     mouse_left = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
     mouse_right = IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
 
-    i32 index = position_to_index(mouse_x, mouse_y);
+    i32 new_index = position_to_index(mouse_x, mouse_y);
     
     if(IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)){
         selected_index = -1;
         selected_piece = -1;
     }
 
-    i32 last_selected;
     if(IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){
-        last_selected = selected_index; 
-        selected_index = position_to_index(mouse_x, mouse_y);
-        if(last_selected == selected_index && selected_piece != -1){
-            selected_index = -1;
-        }
-        if(selected_index == -1){
-            selected_piece = -1;
-        }else {
+        if(new_index != selected_index && selected_piece != -1 && can_move(new_index)){
+            do_move(new_index);
+        }else{
+            selected_index = new_index;
             selected_piece = find_piece_all(selected_index, &selected_black);
+            dragged_piece = selected_piece;
             selected_turns = get_turns_m(selected_index, selected_black, selected_piece);
         }
     }
-    i32 tmp_index;
     if(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)){
-        if(selected_piece != -1){
-            tmp_index = position_to_index(mouse_x, mouse_y);
-            if(tmp_index != selected_index){
-                selected_index = -1;
-            }
+        if(new_index != selected_index && dragged_piece != -1 && can_move(new_index)){
+            do_move(new_index);
         }
-        selected_piece = -1;    
+        dragged_piece = -1;    
     }
     
     if(IsKeyPressed(KEY_SPACE)){
@@ -470,6 +504,4 @@ void chess_run(){
     }
 
     chess_clean();
-
-    CloseWindow();
 }
