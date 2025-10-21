@@ -55,6 +55,8 @@ typedef enum{
 #define RANK_7 0x00ff000000000000ULL
 #define RANK_8 0xff00000000000000ULL
 
+#define RANK_18 0xff000000000000ffULL
+
 #define FILE_A 0x0101010101010101ULL
 #define FILE_B 0x0202020202020202ULL
 #define FILE_C 0x0404040404040404ULL
@@ -106,30 +108,40 @@ piece_t dragged_piece = NO_PIECE;
 bool selected_black = false;
 u64 selected_turns = 0;
 
+bool in_promotion = false;
+i32 promoted_to = NUL_INDEX;
+i32 promotion_indexes[4];
+piece_t promotion_pieces[4] = { QUEEN, KNIGHT, ROOK, BISHOP };
+
 
 u64 sliders[2][64];
 void gen_slider_masks(){
     u64* bishop_sliders = sliders[0];
     u64* rook_sliders = sliders[1];
 
+    // generate bishop diagonal attack masks
     u64 diagonal, anti_diagonal, diagonal_len, anti_diagonal_len, starting_bit;
     for(i32 r = 0; r < 8; r++){
         for(i32 f = 0; f < 8; f++){
+            // how much bits are in diagonal
             diagonal_len = 8 - ((r > f) ? r - f : f - r);
             anti_diagonal_len = (((r + f) < 8) ? 1 + r + f : 15 - (r + f));
 
-            starting_bit = (r << 3) + f;
+            // go in diagonal directions
+            starting_bit = r > 0 ? r << 3 : f;
             for(i32 i = 0; i < diagonal_len; i++){
-                diagonal |= 1 << (starting_bit + i * 9);
+                PUT_BIT(diagonal, starting_bit + i * 9);
             }
+            starting_bit = r > 0 ? r << 3 + 7 : f;
             for(i32 i = 0; i < anti_diagonal_len; i++){
-                anti_diagonal |= 1 << (starting_bit + i * 7);
+                PUT_BIT(anti_diagonal, starting_bit + i * 7);
             }        
 
             bishop_sliders[(r << 3) + f] = diagonal | anti_diagonal;
         }
     }
 
+    // generate rook horizontal/vertical attack masks
     u64 rank, file, row;
     for(i32 r = 0; r < 8; r++){
         for(i32 f = 0; f < 8; f++){
@@ -237,7 +249,7 @@ force_inline void move_piece_m(bool black, piece_t piece, u64 m_from, u64 m_to){
     PUT_BITS(colors[black], m_to);
 }
 
-force_inline u64 get_turns_m(i32 index, bool black, piece_t piece){
+force_inline u64 get_turns_m(bool black, i32 index, piece_t piece){
     u64 mask = 0;
     u64 color_pieces = colors[black];
     u64 other_pieces = colors[!black];
@@ -271,6 +283,12 @@ force_inline u64 get_turns_m(i32 index, bool black, piece_t piece){
     }
     return mask;
 }
+
+void promote(bool black, i32 index, piece_t piece){
+    CLEAR_BIT(pieces[PAWN], index);
+    PUT_BIT(pieces[piece], index);
+}
+
 force_inline i32 pop_lsb(u64* val){
     i32 i = LSB_ZEROS(*val);
     *val &= *val - 1;
@@ -328,6 +346,7 @@ void setup_board(){
     put_piece(CBLACK, BISHOP, 61);
     put_piece(CBLACK, QUEEN, 59);
     put_piece(CBLACK, KING, 60);
+
 }
 
 
@@ -335,6 +354,7 @@ i32 mouse_x = 0;
 i32 mouse_y = 0;
 bool mouse_left = false;
 bool mouse_right = false;
+i32 hover_index = NUL_INDEX;
 
 // 128x128
 Texture2D piece_textures[CCOLOR_COUNT][PIECE_COUNT];
@@ -384,10 +404,10 @@ void load_assets(){
 
 void index_to_position(i32 index, i32* x, i32* y){
     *x = (index % 8) * SQUARE_SIDE;
-    *y = SCREEN_HEIGHT - SQUARE_SIDE - ((index / 8) * SQUARE_SIDE);
+    *y = SCREEN_HEIGHT - SQUARE_SIDE - ((index >> 3) * SQUARE_SIDE);
 }
 i32 position_to_index(i32 x, i32 y){
-    i32 index = x / SQUARE_SIDE + ((SCREEN_HEIGHT - y) / SQUARE_SIDE) * 8;
+    i32 index = x / SQUARE_SIDE + (((SCREEN_HEIGHT - y) / SQUARE_SIDE) << 3);
     return index;
 }
 void draw_square(i32 x, i32 y, Color color){
@@ -437,12 +457,24 @@ void draw_selected(){
         draw_square_by_index(selected_index, SELECTED_TINT);
         draw_attacks(selected_turns);
     }
-    i32 hover_index;
-    if(dragged_piece != NO_PIECE){
-        draw_piece(mouse_x - HALF_SQUARE_SIDE, mouse_y - HALF_SQUARE_SIDE, selected_black, dragged_piece);
-        hover_index = position_to_index(mouse_x, mouse_y);
+    if(dragged_piece != NO_PIECE){   
         if(GET_BIT(selected_turns, hover_index)){
             draw_square_by_index(hover_index, SELECTED_HOVER);
+        }
+        draw_piece(mouse_x - HALF_SQUARE_SIDE, mouse_y - HALF_SQUARE_SIDE, selected_black, dragged_piece);
+    }
+}
+void draw_promotion(){
+    if(!in_promotion){
+        return;
+    }
+    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SELECTED_HOVER);
+    i32 index;
+    for(i32 i = 0; i < 4; i++){
+        index = promotion_indexes[i];
+        draw_piece_by_index(index, blacks_turn, promotion_pieces[i]);
+        if(index == hover_index){
+            draw_square_by_index(index, SELECTED_TINT);
         }
     }
 }
@@ -498,16 +530,43 @@ bool can_move(i32 new_index){
     return GET_BIT(selected_turns, new_index) && selected_black == blacks_turn;
 }
 
+bool check_promotion(i32 new_index){
+    if(selected_piece == PAWN && GET_BIT(pieces[PAWN] & colors[blacks_turn] & RANK_18, new_index)){
+        in_promotion = true;
+        promoted_to = new_index;
+        for(i32 i = 0; i < 4; i++){
+            promotion_indexes[i] = new_index + (blacks_turn ? 8 : -8) * i;
+        }
+        return true;
+    }
+    return false;
+}
+
+void deselect_piece(){
+    selected_index = NUL_INDEX;
+    selected_piece = NO_PIECE;
+    dragged_piece = NO_PIECE;
+}
+void select_piece(i32 index){
+    selected_index = index;
+    selected_piece = find_piece_all(selected_index, &selected_black);
+    dragged_piece = selected_piece;
+    selected_turns = get_turns_m(selected_black, selected_index, selected_piece);
+}
+
 void do_move(i32 new_index){
-    if(GET_BIT(colors[!selected_black], new_index)){
+    if(GET_BIT(colors[!blacks_turn], new_index)){
         PlaySound(capture_sound);
     }else{
         PlaySound(move_sound);
     }
-    move_piece(selected_black, selected_piece, selected_index, new_index);
-    selected_index = NUL_INDEX;
-    selected_piece = NO_PIECE;
-    blacks_turn = !blacks_turn;
+    move_piece(blacks_turn, selected_piece, selected_index, new_index);
+
+    if(!check_promotion(new_index)){
+        blacks_turn = !blacks_turn;
+    }
+
+    deselect_piece();
 }
 
 void poll_events(){
@@ -515,22 +574,32 @@ void poll_events(){
     mouse_y = GetMouseY();
     mouse_left = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
     mouse_right = IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
+    hover_index = position_to_index(mouse_x, mouse_y);
 
-    i32 new_index = position_to_index(mouse_x, mouse_y);
+    i32 new_index = hover_index;
     
     if(IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)){
-        selected_index = NUL_INDEX;
-        selected_piece = NO_PIECE;
+        deselect_piece();
     }
 
     if(IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){
         if(new_index != selected_index && selected_piece != NO_PIECE && can_move(new_index)){
             do_move(new_index);
         }else{
-            selected_index = new_index;
-            selected_piece = find_piece_all(selected_index, &selected_black);
-            dragged_piece = selected_piece;
-            selected_turns = get_turns_m(selected_index, selected_black, selected_piece);
+            if(in_promotion){
+                for(i32 i = 0; i < 4; i++){
+                    if(hover_index == promotion_indexes[i]){
+                        promote(blacks_turn, promoted_to, promotion_pieces[i]);
+
+                        deselect_piece();
+
+                        blacks_turn = !blacks_turn;
+                        in_promotion = false;
+                    }
+                }
+            }else{
+                select_piece(new_index);
+            }
         }
     }
     if(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)){
@@ -556,6 +625,7 @@ void chess_run(){
             draw_board();
             draw_pieces();
             draw_selected();
+            draw_promotion();
             
 
         EndDrawing();
