@@ -5,14 +5,16 @@
 
 
 /*
-56 57 58 59 60 61 62 63 
-48 49 50 51 52 53 54 55 
-40 41 42 43 44 45 46 47 
-32 33 34 35 36 37 38 39 
-24 25 26 27 28 29 30 31 
-16 17 18 19 20 21 22 23 
- 8  9 10 11 12 13 14 15 
- 0  1  2  3  4  5  6  7 
+8   56 57 58 59 60 61 62 63 
+7   48 49 50 51 52 53 54 55 
+6   40 41 42 43 44 45 46 47 
+5   32 33 34 35 36 37 38 39 
+4   24 25 26 27 28 29 30 31 
+3   16 17 18 19 20 21 22 23 
+2    8  9 10 11 12 13 14 15 
+1    0  1  2  3  4  5  6  7
+
+    A  B  C  D  E  F  G  H
 */
 
 typedef enum {
@@ -44,26 +46,26 @@ typedef enum{
 #define NUL_INDEX -1
 
 
-#define RANK_1 0x00000000000000ff
-#define RANK_2 0x000000000000ff00
-#define RANK_3 0x0000000000ff0000
-#define RANK_4 0x00000000ff000000
-#define RANK_5 0x000000ff00000000
-#define RANK_6 0x0000ff0000000000
-#define RANK_7 0x00ff000000000000
-#define RANK_8 0xff00000000000000
+#define RANK_1 0x00000000000000ffULL
+#define RANK_2 0x000000000000ff00ULL
+#define RANK_3 0x0000000000ff0000ULL
+#define RANK_4 0x00000000ff000000ULL
+#define RANK_5 0x000000ff00000000ULL
+#define RANK_6 0x0000ff0000000000ULL
+#define RANK_7 0x00ff000000000000ULL
+#define RANK_8 0xff00000000000000ULL
 
-#define FILE_A 0x0101010101010101
-#define FILE_B 0x0202020202020202
-#define FILE_C 0x0404040404040404
-#define FILE_D 0x0808080808080808
-#define FILE_E 0x1010101010101010
-#define FILE_F 0x2020202020202020
-#define FILE_G 0x4040404040404040
-#define FILE_H 0x8080808080808080
+#define FILE_A 0x0101010101010101ULL
+#define FILE_B 0x0202020202020202ULL
+#define FILE_C 0x0404040404040404ULL
+#define FILE_D 0x0808080808080808ULL
+#define FILE_E 0x1010101010101010ULL
+#define FILE_F 0x2020202020202020ULL
+#define FILE_G 0x4040404040404040ULL
+#define FILE_H 0x8080808080808080ULL
 
-#define FILE_AB 0x0303030303030303
-#define FILE_GH 0xC0C0C0C0C0C0C0C0
+#define FILE_AB 0x0303030303030303ULL
+#define FILE_GH 0xC0C0C0C0C0C0C0C0ULL
 
 
 #define PUT_BITS(value, mask)      ((value) |=  (mask))
@@ -83,18 +85,18 @@ typedef enum{
 #define ROOK_VALUE   500
 #define QUEEN_VALUE  900
 #define KING_VALUE   0xffffffff
-i64 piece_values[6] = { PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_VALUE, QUEEN_VALUE, KING_VALUE };
+i64 piece_values[PIECE_COUNT] = { PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_VALUE, QUEEN_VALUE, KING_VALUE };
 
 
 #define LSB_ZEROS(val) __builtin_ctzll(val)
 
 
-// i8 direction_index[8] = { -1, 1, 8, -8, 7, -9, 9, -7 }; 
-
 u64 pieces[PIECE_COUNT] = { 0 };
 u64 colors[CCOLOR_COUNT] = { 0 };
 
-bool can_castle = true;
+#define CASTLE_WHITE 0x1
+#define CASTLE_BLACK 0x2
+i32 castle = CASTLE_WHITE | CASTLE_BLACK;
 
 bool blacks_turn = false;
 
@@ -103,6 +105,69 @@ piece_t selected_piece = NO_PIECE;
 piece_t dragged_piece = NO_PIECE;
 bool selected_black = false;
 u64 selected_turns = 0;
+
+
+u64 sliders[2][64];
+void gen_slider_masks(){
+    u64* bishop_sliders = sliders[0];
+    u64* rook_sliders = sliders[1];
+
+    u64 diagonal, anti_diagonal, diagonal_len, anti_diagonal_len, starting_bit;
+    for(i32 r = 0; r < 8; r++){
+        for(i32 f = 0; f < 8; f++){
+            diagonal_len = 8 - ((r > f) ? r - f : f - r);
+            anti_diagonal_len = (((r + f) < 8) ? 1 + r + f : 15 - (r + f));
+
+            starting_bit = (r << 3) + f;
+            for(i32 i = 0; i < diagonal_len; i++){
+                diagonal |= 1 << (starting_bit + i * 9);
+            }
+            for(i32 i = 0; i < anti_diagonal_len; i++){
+                anti_diagonal |= 1 << (starting_bit + i * 7);
+            }        
+
+            bishop_sliders[(r << 3) + f] = diagonal | anti_diagonal;
+        }
+    }
+
+    u64 rank, file, row;
+    for(i32 r = 0; r < 8; r++){
+        for(i32 f = 0; f < 8; f++){
+            rank = RANK_1 << (r << 3);
+            file = (FILE_A << f) | (FILE_A >> (8 - f));
+            rook_sliders[(r << 3) + f] = rank | file;
+        }
+    }
+}
+
+u64 magics[64];
+u64 mshifts[64];
+u64 mmasks[64];
+u64 bishop_table[64][4096];
+u64 rook_table[64][4096];
+void gen_bishop_magics(){
+
+}
+void gen_rook_magics(){
+
+}
+void gen_magics(){
+    
+}
+
+force_inline u64 bishop_moves(u64 curr_color, u64 board, i32 index){
+    u64 mask = board & mmasks[index];
+    u64 hash = (mask * magics[index]) >> mshifts[index];
+    return bishop_table[index][hash] & ~curr_color;
+}
+force_inline u64 rook_moves(u64 curr_color, u64 board, i32 index){
+    u64 mask = board & mmasks[index];
+    u64 hash = (mask * magics[index]) >> mshifts[index];
+    return rook_table[index][hash] & ~curr_color;
+}
+force_inline u64 queen_moves(u64 curr_color, u64 board, i32 index){
+    return bishop_moves(curr_color, board, index) | rook_moves(curr_color, board, index);
+}
 
 
 // force_inline u64 full_mask8(u64 arr[]){
@@ -120,20 +185,16 @@ force_inline u64 get_all_pieces() {
 
 #define PIECE_CHECK(pcs, mask, piece)  (!!(pcs[(piece)] & (mask)))
 #define PIECE_HERE(pcs, mask, piece)   (PIECE_CHECK(pcs, mask, piece) * (piece))
-#define __PIECE_HERE(pcs, mask, piece) (PIECE_CHECK(pcs, mask, piece) * (piece + 1))
 force_inline piece_t find_piece(bool black, i32 index){
     u64 mask = colors[black] & (1ull << index);
-    // +1 so it will be -1 if no pieces are found
-    i32 val = __PIECE_HERE(pieces, mask, PAWN) + __PIECE_HERE(pieces, mask, KNIGHT) + __PIECE_HERE(pieces, mask, BISHOP) 
-            + __PIECE_HERE(pieces, mask, ROOK) + __PIECE_HERE(pieces, mask, QUEEN)  + __PIECE_HERE(pieces, mask, KING);
-    return val - 1;
-} 
-// #define PIECE_HERE(pcs, mask, piece) (!!(pcs[(piece)] & (mask)) * piece)
-// force_inline piece_t find_piece(bool black, i32 index){
-//     u64 mask = colors[black] & (1ull << index);
-//     return PIECE_HERE(pieces, mask, PAWN) + PIECE_HERE(pieces, mask, KNIGHT) + PIECE_HERE(pieces, mask, BISHOP) 
-//          + PIECE_HERE(pieces, mask, ROOK) + PIECE_HERE(pieces, mask, QUEEN)  + PIECE_HERE(pieces, mask, KING);
-// } 
+    if(mask == 0){
+        return NO_PIECE;
+    }
+    i32 val = PIECE_HERE(pieces, mask, PAWN) + PIECE_HERE(pieces, mask, KNIGHT) + PIECE_HERE(pieces, mask, BISHOP) 
+            + PIECE_HERE(pieces, mask, ROOK) + PIECE_HERE(pieces, mask, QUEEN)  + PIECE_HERE(pieces, mask, KING);
+            // + (mask == 0) * NO_PIECE;
+    return val;
+}
 
 force_inline piece_t find_piece_all(i32 index, bool* black){
     piece_t piece = find_piece(CWHITE, index);
@@ -195,13 +256,13 @@ force_inline u64 get_turns_m(i32 index, bool black, piece_t piece){
              |  (bit >> 6 & ~FILE_AB) | (bit >> 10 & ~FILE_GH) | (bit >> 15 & ~FILE_A) | (bit >> 17 & ~FILE_H)) & ~color_pieces;
         break;
     case BISHOP:
-        
+        mask = bishop_moves(color_pieces, all_pieces, index); 
         break;
     case ROOK:
-
+        mask = rook_moves(color_pieces, all_pieces, index); 
         break;
     case QUEEN:
-
+        mask = queen_moves(color_pieces, all_pieces, index); 
         break;
     case KING: //todo: castling
         mask = ((bit << 1 & ~FILE_A) | (bit << 7 & ~FILE_H) | (bit << 8) | (bit << 9 & ~FILE_A)
@@ -267,13 +328,6 @@ void setup_board(){
     put_piece(CBLACK, BISHOP, 61);
     put_piece(CBLACK, QUEEN, 59);
     put_piece(CBLACK, KING, 60);
-
-
-    put_piece(CWHITE, KNIGHT, 36);
-    put_piece(CWHITE, PAWN, 20);
-    put_piece(CBLACK, PAWN, 21);
-
-    printf("\n\n\n\n\n");
 }
 
 
@@ -324,8 +378,8 @@ void load_assets(){
     piece_textures[CBLACK][KING]   = load_texture("resources/black-king.png");
 
     capture_sound = LoadSound("resources/capture.mp3");
-    move_sound = LoadSound("resources/move-self.mp3");
-    notify_sound = LoadSound("resources/notify.mp3");
+    move_sound    = LoadSound("resources/move-self.mp3");
+    notify_sound  = LoadSound("resources/notify.mp3");
 }
 
 void index_to_position(i32 index, i32* x, i32* y){
