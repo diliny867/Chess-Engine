@@ -137,7 +137,7 @@ void gen_magic(i32 index, i32 directions[4], u64* magics, u32* shifts, u64* mask
     while(true){
         magic = xorshift64(&xs) & xorshift64(&xs) & xorshift64(&xs);
         
-        table = calloc(size, sizeof(u64)); //faster to alloc then free than memzero
+        table = calloc(size, sizeof(u64)); // probably faster to alloc then free than memzero static array
         found = try_magic(mask, magic, shift, index, table, directions);
         free(table);
 

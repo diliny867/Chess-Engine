@@ -22,3 +22,6 @@ typedef double f64;
 
 
 #define force_inline __attribute__((always_inline)) inline
+
+#define min(a, b) (a) < (b) ? (a) : (b);
+#define max(a, b) (a) > (b) ? (a) : (b);

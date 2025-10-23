@@ -167,13 +167,81 @@ extern u64 rook_masks[64];
 u64 bishop_table[64][512];
 u64 rook_table[64][4096];
 
-void fill_bishop_table(){
+u64 next_subset(u64 subset, u64 set){
+    return (subset - set) & set;
+}
 
+i32 get_dist_to_edge(i32 index, i32 direction){
+    i32 r = index / 8;
+    i32 f = index % 8;
+    switch (direction){
+    case 1:
+        return 7 - f;
+    case 8: 
+        return 7 - r;
+    case -1: 
+        return f;
+    case -8: 
+        return r;
+    case 7: 
+        return min(7 - r, f);
+    case 9: 
+        return min(7 - r, 7 - f);
+    case -7: 
+        return min(r, 7 - f);
+    case -9: 
+        return min(r, f);
+    }
+}
+u64 gen_slider_attack(i32 index, i32 directions[4], u64 mask){
+    u64 attack = 0;
+    u64 val;
+    for(i32 i = 0; i < 4; i++){
+        u64 direction = directions[i];
+        u64 iters = get_dist_to_edge(index, direction);
+        u64 shift = index;
+        for(i32 j = 0; j < iters; j++){
+            shift += direction;
+            val = 1ull << shift;
+            attack |= val;
+            if((val & mask) != 0){
+                break;
+            }
+        }
+    }
+    return attack;
+}
+
+void fill_bishop_table(){
+    u64 mask, hash, shift, magic, sub, *table;
+    for(i32 i = 0; i < 64; i++){
+        mask = bishop_masks[i];
+        magic = bishop_magics[i];
+        shift = bishop_shifts[i];
+        table = bishop_table[i];
+        sub = 0;
+        for(i32 j = 0; j < 512; j++){
+            hash = (sub * magic) >> shift;
+            table[hash] = gen_slider_attack(i, (i32[4]){ 7, 9, -9, -7 }, sub);
+            sub = next_subset(sub, mask);
+        }
+    }
 }
 void fill_rook_table(){
-
+    u64 mask, hash, shift, magic, sub, *table;
+    for(i32 i = 0; i < 64; i++){
+        mask = rook_masks[i];
+        magic = rook_magics[i];
+        shift = rook_shifts[i];
+        table = rook_table[i];
+        sub = 0;
+        for(i32 j = 0; j < 4096; j++){
+            hash = (sub * magic) >> shift;
+            table[hash] = gen_slider_attack(i, (i32[4]){ 1, 8, -8, -1 }, sub);
+            sub = next_subset(sub, mask);
+        }
+    }
 }
-
 
 force_inline u64 bishop_moves(u64 board, i32 index){
     u64 mask = board & bishop_masks[index];
@@ -515,6 +583,9 @@ void draw_board() {
 void chess_init(){
 
     setup_board();
+
+    fill_bishop_table();
+    fill_rook_table();
 
     SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Chess");
