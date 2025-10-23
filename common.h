@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <assert.h>
+#include <time.h>
 
 
 typedef int8_t i8;

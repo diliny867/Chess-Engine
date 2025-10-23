@@ -1,5 +1,7 @@
+#pragma once
 
 #include "common.h"
+#include "tables.h"
 
 #include "raylib.h"
 
@@ -68,6 +70,9 @@ typedef enum{
 
 #define FILE_AB 0x0303030303030303ULL
 #define FILE_GH 0xC0C0C0C0C0C0C0C0ULL
+#define FILE_AH 0x8181818181818181ULL
+
+#define EDGES  0xff818181818181ffULL
 
 
 #define PUT_BITS(value, mask)      ((value) |=  (mask))
@@ -103,6 +108,7 @@ i32 castle = CASTLE_WHITE | CASTLE_BLACK;
 bool blacks_turn = false;
 
 i32 selected_index = NUL_INDEX;
+i32 last_turn[2] = { NUL_INDEX, NUL_INDEX };
 piece_t selected_piece = NO_PIECE;
 piece_t dragged_piece = NO_PIECE;
 bool selected_black = false;
@@ -114,11 +120,10 @@ i32 promotion_indexes[4];
 piece_t promotion_pieces[4] = { QUEEN, KNIGHT, ROOK, BISHOP };
 
 
-u64 sliders[2][64];
+// without edge squares
+u64 bishop_masks[64];
+u64 rook_masks[64];
 void gen_slider_masks(){
-    u64* bishop_sliders = sliders[0];
-    u64* rook_sliders = sliders[1];
-
     // generate bishop diagonal attack masks
     u64 diagonal, anti_diagonal, diagonal_len, anti_diagonal_len, starting_bit;
     for(i32 r = 0; r < 8; r++){
@@ -137,7 +142,7 @@ void gen_slider_masks(){
                 PUT_BIT(anti_diagonal, starting_bit + i * 7);
             }        
 
-            bishop_sliders[(r << 3) + f] = diagonal | anti_diagonal;
+            bishop_masks[(r << 3) + f] = (diagonal | anti_diagonal) & ~EDGES;
         }
     }
 
@@ -147,38 +152,41 @@ void gen_slider_masks(){
         for(i32 f = 0; f < 8; f++){
             rank = RANK_1 << (r << 3);
             file = (FILE_A << f) | (FILE_A >> (8 - f));
-            rook_sliders[(r << 3) + f] = rank | file;
+            rook_masks[(r << 3) + f] = (rank | file) & ~EDGES;
         }
     }
 }
 
-u64 magics[64];
-u64 mshifts[64];
-u64 mmasks[64];
-u64 bishop_table[64][4096];
+extern u64 bishop_magics[64];
+extern u64 rook_magics[64];
+extern u64 bishop_shifts[64];
+extern u64 rook_shifts[64];
+//u64 bishop_masks[64];
+//u64 rook_masks[64];
+
+u64 bishop_table[64][512];
 u64 rook_table[64][4096];
-void gen_bishop_magics(){
+
+void fill_bishop_table(){
 
 }
-void gen_rook_magics(){
+void fill_rook_table(){
 
 }
-void gen_magics(){
-    
-}
 
-force_inline u64 bishop_moves(u64 curr_color, u64 board, i32 index){
-    u64 mask = board & mmasks[index];
-    u64 hash = (mask * magics[index]) >> mshifts[index];
-    return bishop_table[index][hash] & ~curr_color;
+
+force_inline u64 bishop_moves(u64 board, i32 index){
+    u64 mask = board & bishop_masks[index];
+    u64 hash = (mask * bishop_magics[index]) >> bishop_shifts[index];
+    return bishop_table[index][hash];
 }
-force_inline u64 rook_moves(u64 curr_color, u64 board, i32 index){
-    u64 mask = board & mmasks[index];
-    u64 hash = (mask * magics[index]) >> mshifts[index];
-    return rook_table[index][hash] & ~curr_color;
+force_inline u64 rook_moves(u64 board, i32 index){
+    u64 mask = board & rook_masks[index];
+    u64 hash = (mask * rook_magics[index]) >> rook_shifts[index];
+    return rook_table[index][hash];
 }
-force_inline u64 queen_moves(u64 curr_color, u64 board, i32 index){
-    return bishop_moves(curr_color, board, index) | rook_moves(curr_color, board, index);
+force_inline u64 queen_moves(u64 board, i32 index){
+    return bishop_moves(board, index) | rook_moves(board, index);
 }
 
 
@@ -268,13 +276,13 @@ force_inline u64 get_turns_m(bool black, i32 index, piece_t piece){
              |  (bit >> 6 & ~FILE_AB) | (bit >> 10 & ~FILE_GH) | (bit >> 15 & ~FILE_A) | (bit >> 17 & ~FILE_H)) & ~color_pieces;
         break;
     case BISHOP:
-        mask = bishop_moves(color_pieces, all_pieces, index); 
+        mask = bishop_moves(all_pieces, index) & ~color_pieces; 
         break;
     case ROOK:
-        mask = rook_moves(color_pieces, all_pieces, index); 
+        mask = rook_moves(all_pieces, index) & ~color_pieces; 
         break;
     case QUEEN:
-        mask = queen_moves(color_pieces, all_pieces, index); 
+        mask = queen_moves(all_pieces, index) & ~color_pieces; 
         break;
     case KING: //todo: castling
         mask = ((bit << 1 & ~FILE_A) | (bit << 7 & ~FILE_H) | (bit << 8) | (bit << 9 & ~FILE_A)
@@ -374,8 +382,12 @@ Sound notify_sound;
 
 #define SELECTED_TINT  (Color){0x71, 0x81, 0x68, 0x7F}
 #define SELECTED_HOVER (Color){0x71, 0x81, 0x68, 0x5F}
+#define SELECTED_MID   (Color){0x71, 0x81, 0x68, 0x4F}
 #define SELECTED_BLANK (Color){0x71, 0x81, 0x68, 0x00}
 #define SELECTED_COLOR (Color){0x71, 0x81, 0x68, 0xFF}
+
+#define MOVE_HIGHLIGHT (Color){0xF7, 0xF1, 0x1D, 0x50}
+#define MOVE_HIGHLIGHT2 (Color){0x8B, 0xCE, 0xF7, 0x6F}
 
 Texture2D load_texture(char* file_path){
     Texture2D texture = LoadTexture(file_path);
@@ -435,7 +447,7 @@ void draw_pieces_mask(u64 mask, bool black, piece_t piece){
     }
 }
 void draw_attack(i32 x, i32 y){
-    DrawCircleGradient(x, y, 15, SELECTED_BLANK, SELECTED_COLOR);
+    DrawCircleGradient(x, y, 15, SELECTED_MID, SELECTED_COLOR);
 }
 void draw_attacks(u64 mask){
     i32 index, x, y;
@@ -453,6 +465,10 @@ void draw_pieces(){
     }
 }
 void draw_selected(){
+    if(last_turn[0] != NUL_INDEX && last_turn[1] != NUL_INDEX){
+        draw_square_by_index(last_turn[0], MOVE_HIGHLIGHT);
+        draw_square_by_index(last_turn[1], MOVE_HIGHLIGHT);
+    }
     if(selected_index != NUL_INDEX){
         draw_square_by_index(selected_index, SELECTED_TINT);
         draw_attacks(selected_turns);
@@ -488,9 +504,9 @@ void draw_board() {
     char text_number[2] = { '1', '\0' };
     int font_size = 20;
     for(i32 i = 0; i < 8; i++){
-        color = (i & 1) ? COLOR_DARK : COLOR_BRIGHT;
-        DrawText(text_letter, 80 + i * SQUARE_SIDE, SCREEN_HEIGHT - 10 - font_size                    , font_size, color);
-        DrawText(text_number, 10                  , SCREEN_HEIGHT - (70 + i * SQUARE_SIDE) - font_size, font_size, color);
+        color = (i & 1) ? COLOR_DARK : COLOR_BRIGHT; 
+        DrawText(text_letter, 85 + i * SQUARE_SIDE, SCREEN_HEIGHT - 5 - font_size                     , font_size, color);
+        DrawText(text_number, 5                   , SCREEN_HEIGHT - (75 + i * SQUARE_SIDE) - font_size, font_size, color);
         text_letter[0]++;
         text_number[0]++;
     }
@@ -500,7 +516,7 @@ void chess_init(){
 
     setup_board();
 
-    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Chess");
 
     InitAudioDevice();
@@ -542,6 +558,10 @@ bool check_promotion(i32 new_index){
     return false;
 }
 
+void end_turn(){
+    blacks_turn = !blacks_turn;
+}
+
 void deselect_piece(){
     selected_index = NUL_INDEX;
     selected_piece = NO_PIECE;
@@ -550,7 +570,9 @@ void deselect_piece(){
 void select_piece(i32 index){
     selected_index = index;
     selected_piece = find_piece_all(selected_index, &selected_black);
-    dragged_piece = selected_piece;
+    if(selected_black == blacks_turn){
+        dragged_piece = selected_piece;
+    }
     selected_turns = get_turns_m(selected_black, selected_index, selected_piece);
 }
 
@@ -560,10 +582,14 @@ void do_move(i32 new_index){
     }else{
         PlaySound(move_sound);
     }
+    
+    last_turn[0] = selected_index;
+    last_turn[1] = new_index;
+
     move_piece(blacks_turn, selected_piece, selected_index, new_index);
 
     if(!check_promotion(new_index)){
-        blacks_turn = !blacks_turn;
+        end_turn();
     }
 
     deselect_piece();
@@ -593,8 +619,10 @@ void poll_events(){
 
                         deselect_piece();
 
-                        blacks_turn = !blacks_turn;
                         in_promotion = false;
+                        end_turn();
+
+                        break;
                     }
                 }
             }else{
