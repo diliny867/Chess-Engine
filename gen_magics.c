@@ -5,27 +5,53 @@
 #include "xorshift.h"
 
 
-#define EDGES  0xff818181818181ffULL
-
-
 u64 bishop_magics[64];
 u64 rook_magics[64];
+
 u32 bishop_shifts[64];
 u32 rook_shifts[64];
 
-u64 bishop_table[64][512] = { 0 };
-u64 rook_table[64][4096] = { 0 };
+u64 bishop_masks[64];
+u64 rook_masks[64];
 
 
 #define bit_count(val) __builtin_popcountll(val)
+
+void print_mask(u64 val){
+    u8* vals = (u8*)&val;
+    for(i32 i = 0; i < 8; i++){
+        for(i32 j = 0; j < 8; j++){
+            printf("%d", (vals[7 - i] >> j) & 1);
+        }
+        printf("\n");
+    }
+}
+
+#define print_tableu64(table) \
+    do{ \
+        printf("u64 %s[64] = {\n", #table); \
+        for(i32 i = 0; i < 64; i++){ \
+            printf("    0x%016llXULL%c\n", table[i], i < 63 ? ',' : '\0'); \
+        } \
+        printf("};\n"); \
+    }while(0);
+
+#define print_tableu32(table) \
+    do{ \
+        printf("u32 %s[64] = {\n", #table); \
+        for(i32 i = 0; i < 64; i++){ \
+            printf("    %u%c\n", table[i], i < 63 ? ',' : '\0'); \
+        } \
+        printf("};\n"); \
+    }while(0);
 
 
 u64 next_subset(u64 subset, u64 set){
     return (subset - set) & set;
 }
 
-#define min(a, b) (a) > (b) ? (a) : (b);
-#define max(a, b) (a) < (b) ? (a) : (b);
+#define min(a, b) (a) < (b) ? (a) : (b);
+#define max(a, b) (a) > (b) ? (a) : (b);
 
 i32 get_dist_to_edge(i32 index, i32 direction){
     i32 r = index / 8;
@@ -53,36 +79,38 @@ i32 get_dist_to_edge(i32 index, i32 direction){
 u64 gen_attack(i32 index, i32 directions[4], u64 mask){
     u64 attack = 0;
     for(i32 i = 0; i < 4; i++){
-        u64 iters = get_dist_to_edge(index, directions[i]);
-        for(i32 j = 0; i < iters; i++){
-            u64 val = 1ull << index;
-            if(val & mask != 0){
+        u64 direction = directions[i];
+        u64 iters = get_dist_to_edge(index, direction);
+        u64 shift = index;
+        for(i32 j = 0; j < iters; j++){
+            u64 val = 1ull << shift;
+            if((val & mask) != 0){
                 break;
             }
-            index += directions[i];
+            shift += direction;
             attack |= val;
         }
     }
+    return attack;
 }
 
 u64 gen_slider_mask(i32 index, i32 directions[4]){
-    return gen_attack(index, directions, EDGES) ^ (1ull << index);
+    return gen_attack(index, directions, 0) & ~(1ull << index);
 }
 
 bool try_magic(u64 mask, u64 magic, u32 shift, i32 index, u64* table, i32 directions[4]){
     u64 sub = 0;
     u64 hash;
-
-    u64 attacks;
+    u64 attack;
 
     do{
-        attacks = gen_attack(index, directions, sub);
+        attack = gen_attack(index, directions, sub); //todo: precalculate this
 
         hash = (sub * magic) >> shift;
 
         if(table[hash] == 0){
-            table[hash] = attacks;
-        }else if(table[hash] != attacks){
+            table[hash] = attack;
+        }else if(table[hash] != attack){
             return false;
         }
 
@@ -92,21 +120,35 @@ bool try_magic(u64 mask, u64 magic, u32 shift, i32 index, u64* table, i32 direct
 }
 
 xorshift64_state xs;
-void gen_magic(i32 index, i32 directions[4], u64* table, u64* magic_out, u32* shift_out, bool bishop){
-    u64 magic;
-
+void gen_magic(i32 index, i32 directions[4], u64* magics, u32* shifts, u64* masks, bool bishop){
+    
     u64 mask = gen_slider_mask(index, directions);
+    // print_mask(mask);
+    // printf("\n");
+    
     u64 shift = 64 - bit_count(mask);
-
-    printf("%d\n", shift);
+    u64 size = 1 << bit_count(mask);
+    
     assert(bishop ? shift >= 55 : shift >= 52);
-
-    do{
+    
+    u64 magic;
+    u64* table;
+    bool found;
+    while(true){
         magic = xorshift64(&xs) & xorshift64(&xs) & xorshift64(&xs);
-    } while(!try_magic(mask, magic, shift, index, table, directions));
+        
+        table = calloc(size, sizeof(u64)); //faster to alloc then free than memzero
+        found = try_magic(mask, magic, shift, index, table, directions);
+        free(table);
 
-    *shift_out = shift;
-    *magic_out = magic;
+        if(found){
+            break;
+        }
+    }
+
+    shifts[index] = shift;
+    magics[index] = magic;
+    masks[index]  = mask;
 }
 
 void gen_magics(){
@@ -116,31 +158,26 @@ void gen_magics(){
     i32 rook_directions[4] = { 1, 8, -8, -1 };
     
     for(i32 i = 0; i < 64; i++){
-        gen_magic(i, bishop_directions, bishop_table[i], bishop_magics, bishop_shifts, true);
-        gen_magic(i, rook_directions,   rook_table[i],   rook_magics,   rook_shifts,   false);
+        gen_magic(i, bishop_directions, bishop_magics, bishop_shifts, bishop_masks, true);
     }
-    
-}
 
-#define print_table(table) \
-    do{ \
-        printf("%s\n{\n", #table); \
-        for(i32 i = 0; i < 64; i++){ \
-            printf("    0x%016llXULL,\n", table[i]); \
-        } \
-        printf("};\n"); \
-    }while(0);
+    for(i32 i = 0; i < 64; i++){
+        gen_magic(i, rook_directions, rook_magics, rook_shifts, rook_masks, false);
+    }
+}
 
 int main(){
 
     gen_magics();
 
-    print_table(bishop_magics);
-    print_table(rook_magics);
+    print_tableu64(bishop_magics);
+    print_tableu64(rook_magics);
 
+    print_tableu32(bishop_shifts);
+    print_tableu32(rook_shifts);
 
-    print_table(bishop_shifts);
-    print_table(rook_shifts);
+    print_tableu64(bishop_masks);
+    print_tableu64(rook_masks);
 
     return 0;
 }

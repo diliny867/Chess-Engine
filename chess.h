@@ -120,49 +120,49 @@ i32 promotion_indexes[4];
 piece_t promotion_pieces[4] = { QUEEN, KNIGHT, ROOK, BISHOP };
 
 
-// without edge squares
-u64 bishop_masks[64];
-u64 rook_masks[64];
-void gen_slider_masks(){
-    // generate bishop diagonal attack masks
-    u64 diagonal, anti_diagonal, diagonal_len, anti_diagonal_len, starting_bit;
-    for(i32 r = 0; r < 8; r++){
-        for(i32 f = 0; f < 8; f++){
-            // how much bits are in diagonal
-            diagonal_len = 8 - ((r > f) ? r - f : f - r);
-            anti_diagonal_len = (((r + f) < 8) ? 1 + r + f : 15 - (r + f));
-
-            // go in diagonal directions
-            starting_bit = r > 0 ? r << 3 : f;
-            for(i32 i = 0; i < diagonal_len; i++){
-                PUT_BIT(diagonal, starting_bit + i * 9);
-            }
-            starting_bit = r > 0 ? r << 3 + 7 : f;
-            for(i32 i = 0; i < anti_diagonal_len; i++){
-                PUT_BIT(anti_diagonal, starting_bit + i * 7);
-            }        
-
-            bishop_masks[(r << 3) + f] = (diagonal | anti_diagonal) & ~EDGES;
-        }
-    }
-
-    // generate rook horizontal/vertical attack masks
-    u64 rank, file, row;
-    for(i32 r = 0; r < 8; r++){
-        for(i32 f = 0; f < 8; f++){
-            rank = RANK_1 << (r << 3);
-            file = (FILE_A << f) | (FILE_A >> (8 - f));
-            rook_masks[(r << 3) + f] = (rank | file) & ~EDGES;
-        }
-    }
-}
+// // without edge squares
+// u64 bishop_masks[64];
+// u64 rook_masks[64];
+// void gen_slider_masks(){
+//     // generate bishop diagonal attack masks
+//     u64 diagonal, anti_diagonal, diagonal_len, anti_diagonal_len, starting_bit;
+//     for(i32 r = 0; r < 8; r++){
+//         for(i32 f = 0; f < 8; f++){
+//             // how much bits are in diagonal
+//             diagonal_len = 8 - ((r > f) ? r - f : f - r);
+//             anti_diagonal_len = (((r + f) < 8) ? 1 + r + f : 15 - (r + f));
+//
+//             // go in diagonal directions
+//             starting_bit = r > 0 ? r << 3 : f;
+//             for(i32 i = 0; i < diagonal_len; i++){
+//                 PUT_BIT(diagonal, starting_bit + i * 9);
+//             }
+//             starting_bit = r > 0 ? r << 3 + 7 : f;
+//             for(i32 i = 0; i < anti_diagonal_len; i++){
+//                 PUT_BIT(anti_diagonal, starting_bit + i * 7);
+//             }        
+//
+//             bishop_masks[(r << 3) + f] = (diagonal | anti_diagonal) & ~EDGES;
+//         }
+//     }
+//
+//     // generate rook horizontal/vertical attack masks
+//     u64 rank, file, row;
+//     for(i32 r = 0; r < 8; r++){
+//         for(i32 f = 0; f < 8; f++){
+//             rank = RANK_1 << (r << 3);
+//             file = (FILE_A << f) | (FILE_A >> (8 - f));
+//             rook_masks[(r << 3) + f] = (rank | file) & ~EDGES;
+//         }
+//     }
+// }
 
 extern u64 bishop_magics[64];
 extern u64 rook_magics[64];
-extern u64 bishop_shifts[64];
-extern u64 rook_shifts[64];
-//u64 bishop_masks[64];
-//u64 rook_masks[64];
+extern u32 bishop_shifts[64];
+extern u32 rook_shifts[64];
+extern u64 bishop_masks[64];
+extern u64 rook_masks[64];
 
 u64 bishop_table[64][512];
 u64 rook_table[64][4096];
