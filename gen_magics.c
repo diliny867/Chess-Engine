@@ -54,8 +54,8 @@ u64 next_subset(u64 subset, u64 set){
 #define max(a, b) (a) > (b) ? (a) : (b);
 
 i32 get_dist_to_edge(i32 index, i32 direction){
-    i32 r = index / 8;
-    i32 f = index % 8;
+    i32 r = index >> 3;
+    i32 f = index & 7;
     switch (direction){
     case 1:
         return 7 - f;
@@ -74,6 +74,7 @@ i32 get_dist_to_edge(i32 index, i32 direction){
     case -9: 
         return min(r, f);
     }
+    return 0;
 }
 
 u64 gen_attack(i32 index, i32 directions[4], u64 mask){

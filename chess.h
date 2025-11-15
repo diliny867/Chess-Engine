@@ -48,16 +48,16 @@ typedef enum{
 #define NUL_INDEX -1
 
 
-#define RANK_1 0x00000000000000ffULL
-#define RANK_2 0x000000000000ff00ULL
-#define RANK_3 0x0000000000ff0000ULL
-#define RANK_4 0x00000000ff000000ULL
-#define RANK_5 0x000000ff00000000ULL
-#define RANK_6 0x0000ff0000000000ULL
-#define RANK_7 0x00ff000000000000ULL
-#define RANK_8 0xff00000000000000ULL
+#define RANK_1 0x00000000000000FFULL
+#define RANK_2 0x000000000000FF00ULL
+#define RANK_3 0x0000000000FF0000ULL
+#define RANK_4 0x00000000FF000000ULL
+#define RANK_5 0x000000FF00000000ULL
+#define RANK_6 0x0000FF0000000000ULL
+#define RANK_7 0x00FF000000000000ULL
+#define RANK_8 0xFF00000000000000ULL
 
-#define RANK_18 0xff000000000000ffULL
+#define RANK_18 0xFF000000000000FFULL
 
 #define FILE_A 0x0101010101010101ULL
 #define FILE_B 0x0202020202020202ULL
@@ -72,7 +72,7 @@ typedef enum{
 #define FILE_GH 0xC0C0C0C0C0C0C0C0ULL
 #define FILE_AH 0x8181818181818181ULL
 
-#define EDGES  0xff818181818181ffULL
+#define EDGES  0xFF818181818181FFULL
 
 
 #define PUT_BITS(value, mask)      ((value) |=  (mask))
@@ -85,6 +85,8 @@ typedef enum{
 #define TOGGLE_BIT(value, index) TOGGLE_BITS((value), 1ull << (index))
 #define CLEAR_BIT(value, index)  CLEAR_BITS((value),  1ull << (index))
 #define GET_BIT(value, index)    GET_BITS((value),    1ull << (index))
+
+#define EXPAND_FULL(value) (~(value) + 1ull)
 
 #define PAWN_VALUE   100
 #define KNIGHT_VALUE 295
@@ -101,11 +103,21 @@ i64 piece_values[PIECE_COUNT] = { PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_V
 u64 pieces[PIECE_COUNT] = { 0 };
 u64 colors[CCOLOR_COUNT] = { 0 };
 
-#define CASTLE_WHITE 0x1
-#define CASTLE_BLACK 0x2
-i32 castle = CASTLE_WHITE | CASTLE_BLACK;
+// OOO - queenside, OO - kingside
+#define CASTLE_OOO 0
+#define CASTLE_OO  1
+bool castling_rights[2][2] = { { true, true }, { true, true } };
+// #define OOO_POS 0x0200000000000002ULL
+// #define OO_POS  0x4000000000000040ULL
+u64 castle_pos[2] = { 0x0200000000000002ULL, 0x4000000000000040ULL };
+u64 castle_masks[2][2] = { { 0x000000000000000EULL, 0x0000000000000060ULL }, { 0x0E00000000000000ULL, 0x6000000000000000ULL } };
+
+u64 enpassantable = 0;
+
+u64 all_attacks[2] = { 0, 0 };
 
 bool blacks_turn = false;
+
 
 i32 selected_index = NUL_INDEX;
 i32 last_turn[2] = { NUL_INDEX, NUL_INDEX };
@@ -167,13 +179,23 @@ extern u64 rook_masks[64];
 u64 bishop_table[64][512];
 u64 rook_table[64][4096];
 
+
+force_inline i32 pop_lsb(u64* val){
+    i32 i = LSB_ZEROS(*val);
+    *val &= *val - 1;
+    return i;
+}
+force_inline i32 extract_piece(u64* piece_mask){
+    return pop_lsb(piece_mask);
+}
+
 u64 next_subset(u64 subset, u64 set){
     return (subset - set) & set;
 }
 
 i32 get_dist_to_edge(i32 index, i32 direction){
-    i32 r = index / 8;
-    i32 f = index % 8;
+    i32 r = index >> 3;
+    i32 f = index & 7;
     switch (direction){
     case 1:
         return 7 - f;
@@ -192,14 +214,15 @@ i32 get_dist_to_edge(i32 index, i32 direction){
     case -9: 
         return min(r, f);
     }
+    return 0;
 }
 u64 gen_slider_attack(i32 index, i32 directions[4], u64 mask){
     u64 attack = 0;
-    u64 val;
+    u64 val, direction, iters, shift;
     for(i32 i = 0; i < 4; i++){
-        u64 direction = directions[i];
-        u64 iters = get_dist_to_edge(index, direction);
-        u64 shift = index;
+        direction = directions[i];
+        iters = get_dist_to_edge(index, direction);
+        shift = index;
         for(i32 j = 0; j < iters; j++){
             shift += direction;
             val = 1ull << shift;
@@ -257,16 +280,6 @@ force_inline u64 queen_moves(u64 board, i32 index){
     return bishop_moves(board, index) | rook_moves(board, index);
 }
 
-
-// force_inline u64 full_mask8(u64 arr[]){
-//     return arr[0] | arr[1] | arr[2] | arr[3] | arr[4] | arr[5] | arr[6] | arr[7];
-// }
-// force_inline u64 full_mask6(u64 arr[]){
-//     return arr[0] | arr[1] | arr[2] | arr[3] | arr[4] | arr[5];
-// }
-// force_inline u64 get_pieces(bool black) {
-//     return full_mask6(pieces[black]);
-// }
 force_inline u64 get_all_pieces() {
     return colors[CWHITE] | colors[CBLACK];
 }
@@ -325,54 +338,79 @@ force_inline void move_piece_m(bool black, piece_t piece, u64 m_from, u64 m_to){
     PUT_BITS(colors[black], m_to);
 }
 
-force_inline u64 get_turns_m(bool black, i32 index, piece_t piece){
+force_inline u64 get_pin_mask(bool black, i32 index){ // all 1 if no pin
+    return 0;
+}
+
+force_inline bool in_check(bool black, u64 attacks){
+    return (pieces[KING] & colors[black]) & attacks;
+}
+
+// check with if all necessary for castling squares are free (at ==), then choose those squares (at *), then check if we can castle, then choose position 
+force_inline u64 get_castling_mask(bool black, bool castle_type, u64 empties){
+    return ((castle_masks[black][castle_type] & empties & ~all_attacks[!black]) == castle_masks[black][castle_type]) 
+           * castle_masks[black][castle_type] & EXPAND_FULL(castling_rights[black][castle_type]) & castle_pos[castle_type];
+}
+
+u64 get_turns_m(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
     u64 mask = 0;
     u64 color_pieces = colors[black];
     u64 other_pieces = colors[!black];
     u64 all_pieces = color_pieces | other_pieces;
     u64 empties = ~all_pieces;
-    u64 bit = 1ull << index;
+    u64 castle_blocks;
     switch (piece){
     case PAWN: //todo: enpassant
-        mask =  (((bit << 7 & ~FILE_H) | (bit << 9 & ~FILE_A)) &  (black - 1llu)                     //white side attacks
-             |   ((bit >> 7 & ~FILE_A) | (bit >> 9 & ~FILE_H)) & ~(black - 1llu)) & other_pieces     //black side attacks
-             | (((bit << 8) | ((bit & RANK_2) << 16) & (empties << 8)) &  (black - 1llu)             //white side steps
-             |  ((bit >> 8) | ((bit & RANK_7) >> 16) & (empties >> 8)) & ~(black - 1llu)) & empties; //black side steps
+        mask |= (((piece_mask << 7 & ~FILE_H) | (piece_mask << 9 & ~FILE_A)) &  (black - 1llu)                  //white side attacks
+             |   ((piece_mask >> 7 & ~FILE_A) | (piece_mask >> 9 & ~FILE_H)) & ~(black - 1llu)) & other_pieces  //black side attacks
+             |   ((piece_mask << 8) | ((piece_mask & RANK_2) << 16) & (empties << 8)) &  (black - 1llu)         //white side steps
+             |   ((piece_mask >> 8) | ((piece_mask & RANK_7) >> 16) & (empties >> 8)) & ~(black - 1llu);        //black side steps
         break;
     case KNIGHT:
-        mask = ((bit << 6 & ~FILE_GH) | (bit << 10 & ~FILE_AB) | (bit << 15 & ~FILE_H) | (bit << 17 & ~FILE_A)
-             |  (bit >> 6 & ~FILE_AB) | (bit >> 10 & ~FILE_GH) | (bit >> 15 & ~FILE_A) | (bit >> 17 & ~FILE_H)) & ~color_pieces;
+        mask |= (piece_mask << 6 & ~FILE_GH) | (piece_mask << 10 & ~FILE_AB) | (piece_mask << 15 & ~FILE_H) | (piece_mask << 17 & ~FILE_A)
+             |  (piece_mask >> 6 & ~FILE_AB) | (piece_mask >> 10 & ~FILE_GH) | (piece_mask >> 15 & ~FILE_A) | (piece_mask >> 17 & ~FILE_H);
         break;
     case BISHOP:
-        mask = bishop_moves(all_pieces, index) & ~color_pieces; 
+        while(piece_mask){
+            mask |= bishop_moves(all_pieces, extract_piece(&piece_mask)); 
+        }
         break;
     case ROOK:
-        mask = rook_moves(all_pieces, index) & ~color_pieces; 
+        while(piece_mask){
+            mask |= rook_moves(all_pieces, extract_piece(&piece_mask)); 
+        }
         break;
     case QUEEN:
-        mask = queen_moves(all_pieces, index) & ~color_pieces; 
+        while(piece_mask){
+            mask |= queen_moves(all_pieces, extract_piece(&piece_mask)); 
+        }
+        break; 
+    case KING:
+        mask |= get_castling_mask(black, CASTLE_OOO, empties);
+        mask |= get_castling_mask(black, CASTLE_OO, empties);
+        mask |= (piece_mask << 1 & ~FILE_A) | (piece_mask << 7 & ~FILE_H) | (piece_mask << 8) | (piece_mask << 9 & ~FILE_A)
+             |  (piece_mask >> 1 & ~FILE_H) | (piece_mask >> 7 & ~FILE_A) | (piece_mask >> 8) | (piece_mask >> 9 & ~FILE_H);
         break;
-    case KING: //todo: castling
-        mask = ((bit << 1 & ~FILE_A) | (bit << 7 & ~FILE_H) | (bit << 8) | (bit << 9 & ~FILE_A)
-             |  (bit >> 1 & ~FILE_H) | (bit >> 7 & ~FILE_A) | (bit >> 8) | (bit >> 9 & ~FILE_H)) & ~color_pieces;
-        break;
+    }
+    return mask & ~color_pieces;
+}
+u64 get_color_turns_m(bool black){
+    u64 color = colors[black];
+    u64 mask = 0;
+    for(piece_t piece = PAWN; piece <= KING; piece++){
+        mask |= get_turns_m(black, pieces[piece] & color, piece);
     }
     return mask;
 }
+force_inline u64 get_index_turns_m(bool black, i32 index, piece_t piece){
+    return get_turns_m(black, 1ull << index, piece);
+}
 
-void promote(bool black, i32 index, piece_t piece){
+force_inline void promote(bool black, i32 index, piece_t piece){
     CLEAR_BIT(pieces[PAWN], index);
     PUT_BIT(pieces[piece], index);
 }
 
-force_inline i32 pop_lsb(u64* val){
-    i32 i = LSB_ZEROS(*val);
-    *val &= *val - 1;
-    return i;
-}
-force_inline i32 extract_piece(u64* piece_mask){
-    return pop_lsb(piece_mask);
-}
 i64 evaluate_values() {
     i64 value = 0;
     u64 piece_mask;
@@ -392,6 +430,11 @@ i64 evaluate_values() {
     return value;
 }
 
+void setup_turn(){
+    all_attacks[CWHITE] = get_color_turns_m(CWHITE);
+    all_attacks[CBLACK] = get_color_turns_m(CBLACK);
+
+}
 
 void clear_board(){
     memset(pieces, 0, sizeof(pieces));
@@ -483,7 +526,7 @@ void load_assets(){
 }
 
 void index_to_position(i32 index, i32* x, i32* y){
-    *x = (index % 8) * SQUARE_SIDE;
+    *x = (index & 7) * SQUARE_SIDE;
     *y = SCREEN_HEIGHT - SQUARE_SIDE - ((index >> 3) * SQUARE_SIDE);
 }
 i32 position_to_index(i32 x, i32 y){
@@ -583,6 +626,7 @@ void draw_board() {
 void chess_init(){
 
     setup_board();
+    setup_turn();
 
     fill_bishop_table();
     fill_rook_table();
@@ -631,6 +675,7 @@ bool check_promotion(i32 new_index){
 
 void end_turn(){
     blacks_turn = !blacks_turn;
+    setup_turn();
 }
 
 void deselect_piece(){
@@ -644,7 +689,15 @@ void select_piece(i32 index){
     if(selected_black == blacks_turn){
         dragged_piece = selected_piece;
     }
-    selected_turns = get_turns_m(selected_black, selected_index, selected_piece);
+    selected_turns = get_index_turns_m(selected_black, selected_index, selected_piece);
+}
+
+bool move_is_castling(piece_e piece, i32 from, i32 to){
+    if(piece != KING){
+        return false;
+    }
+    i32 diff = abs(from - to);
+    return diff == 3 || diff == 2; // pretty rudimentary castling checking
 }
 
 void do_move(i32 new_index){
@@ -658,6 +711,27 @@ void do_move(i32 new_index){
     last_turn[1] = new_index;
 
     move_piece(blacks_turn, selected_piece, selected_index, new_index);
+
+    if(move_is_castling(selected_piece, selected_index, new_index)){
+        if(new_index < selected_index){
+            move_piece(blacks_turn, ROOK, new_index - 1, new_index + 1);
+        }else{
+            move_piece(blacks_turn, ROOK, new_index + 1, new_index - 1);
+        }
+    }
+
+    if(selected_piece == KING){
+        castling_rights[blacks_turn][CASTLE_OOO] = false;
+        castling_rights[blacks_turn][CASTLE_OO] = false;
+    }
+    if(selected_piece == ROOK){
+        if(selected_index == 0 || selected_index == 56){
+            castling_rights[blacks_turn][CASTLE_OOO] = false;
+        }
+        else if(selected_index == 7 || selected_index == 63){
+            castling_rights[blacks_turn][CASTLE_OO] = false;
+        }
+    }
 
     if(!check_promotion(new_index)){
         end_turn();
