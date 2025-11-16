@@ -86,7 +86,7 @@ typedef enum{
 #define CLEAR_BIT(value, index)  CLEAR_BITS((value),  1ull << (index))
 #define GET_BIT(value, index)    GET_BITS((value),    1ull << (index))
 
-#define EXPAND_FULL(value) (~(value) + 1ull)
+#define EXPAND_FULL(value) (~(value) + 1)
 
 #define PAWN_VALUE   100
 #define KNIGHT_VALUE 295
@@ -99,6 +99,18 @@ i64 piece_values[PIECE_COUNT] = { PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_V
 
 #define LSB_ZEROS(val) __builtin_ctzll(val)
 
+#define sign(val) (((val) > 0) - ((val) < 0))
+
+void print_mask(u64 val){
+    u8* vals = (u8*)&val;
+    for(i32 i = 0; i < 8; i++){
+        for(i32 j = 0; j < 8; j++){
+            printf("%d", (vals[7 - i] >> j) & 1);
+        }
+        printf("\n");
+    }
+}
+
 
 u64 pieces[PIECE_COUNT] = { 0 };
 u64 colors[CCOLOR_COUNT] = { 0 };
@@ -109,7 +121,8 @@ u64 colors[CCOLOR_COUNT] = { 0 };
 bool castling_rights[2][2] = { { true, true }, { true, true } };
 // #define OOO_POS 0x0200000000000002ULL
 // #define OO_POS  0x4000000000000040ULL
-u64 castle_pos[2] = { 0x0200000000000002ULL, 0x4000000000000040ULL };
+//u64 castle_pos[2] = { 0x0200000000000002ULL, 0x4000000000000040ULL };
+u64 castle_pos[2][2] = { { 0x0000000000000002ULL, 0x0000000000000040ULL }, { 0x0200000000000000ULL, 0x4000000000000000ULL } };
 u64 castle_masks[2][2] = { { 0x000000000000000EULL, 0x0000000000000060ULL }, { 0x0E00000000000000ULL, 0x6000000000000000ULL } };
 
 u64 enpassantable = 0;
@@ -346,10 +359,10 @@ force_inline bool in_check(bool black, u64 attacks){
     return (pieces[KING] & colors[black]) & attacks;
 }
 
-// check with if all necessary for castling squares are free (at ==), then choose those squares (at *), then check if we can castle, then choose position 
+// check if we can castle, then check with if all necessary for castling squares are free (at ==), then choose those squares (at *), then choose position 
 force_inline u64 get_castling_mask(bool black, bool castle_type, u64 empties){
-    return ((castle_masks[black][castle_type] & empties & ~all_attacks[!black]) == castle_masks[black][castle_type]) 
-           * castle_masks[black][castle_type] & EXPAND_FULL(castling_rights[black][castle_type]) & castle_pos[castle_type];
+    return (castling_rights[black][castle_type] && ((castle_masks[black][castle_type] & empties & ~all_attacks[!black]) == castle_masks[black][castle_type])) 
+           * castle_pos[black][castle_type];
 }
 
 u64 get_turns_m(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
@@ -359,12 +372,13 @@ u64 get_turns_m(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
     u64 all_pieces = color_pieces | other_pieces;
     u64 empties = ~all_pieces;
     u64 castle_blocks;
+    u64 pawn_attackable = other_pieces | enpassantable;
     switch (piece){
-    case PAWN: //todo: enpassant
-        mask |= (((piece_mask << 7 & ~FILE_H) | (piece_mask << 9 & ~FILE_A)) &  (black - 1llu)                  //white side attacks
-             |   ((piece_mask >> 7 & ~FILE_A) | (piece_mask >> 9 & ~FILE_H)) & ~(black - 1llu)) & other_pieces  //black side attacks
-             |   ((piece_mask << 8) | ((piece_mask & RANK_2) << 16) & (empties << 8)) &  (black - 1llu)         //white side steps
-             |   ((piece_mask >> 8) | ((piece_mask & RANK_7) >> 16) & (empties >> 8)) & ~(black - 1llu);        //black side steps
+    case PAWN:
+        mask |= (((piece_mask << 7 & ~FILE_H) | (piece_mask << 9 & ~FILE_A)) &  (black - 1llu)                     //white side attacks
+             |   ((piece_mask >> 7 & ~FILE_A) | (piece_mask >> 9 & ~FILE_H)) & ~(black - 1llu)) & pawn_attackable  //black side attacks
+             |   ((piece_mask << 8) | ((piece_mask & RANK_2) << 16) & (empties << 8)) &  (black - 1llu)            //white side steps
+             |   ((piece_mask >> 8) | ((piece_mask & RANK_7) >> 16) & (empties >> 8)) & ~(black - 1llu);           //black side steps
         break;
     case KNIGHT:
         mask |= (piece_mask << 6 & ~FILE_GH) | (piece_mask << 10 & ~FILE_AB) | (piece_mask << 15 & ~FILE_H) | (piece_mask << 17 & ~FILE_A)
@@ -433,7 +447,6 @@ i64 evaluate_values() {
 void setup_turn(){
     all_attacks[CWHITE] = get_color_turns_m(CWHITE);
     all_attacks[CBLACK] = get_color_turns_m(CBLACK);
-
 }
 
 void clear_board(){
@@ -692,6 +705,13 @@ void select_piece(i32 index){
     selected_turns = get_index_turns_m(selected_black, selected_index, selected_piece);
 }
 
+bool move_is_double_pawn_move(piece_e piece, i32 from, i32 to){
+    if(piece != PAWN){
+        return false;
+    }
+    i32 diff = abs(from - to);
+    return diff == 16;
+}
 bool move_is_castling(piece_e piece, i32 from, i32 to){
     if(piece != KING){
         return false;
@@ -731,6 +751,11 @@ void do_move(i32 new_index){
         else if(selected_index == 7 || selected_index == 63){
             castling_rights[blacks_turn][CASTLE_OO] = false;
         }
+    }
+
+    enpassantable = 0;
+    if(move_is_double_pawn_move(selected_piece, selected_index, new_index)){
+        enpassantable |= (1ull << (selected_index + ((new_index - selected_index) >> 1)));
     }
 
     if(!check_promotion(new_index)){
