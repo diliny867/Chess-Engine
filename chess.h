@@ -125,7 +125,7 @@ bool castling_rights[2][2] = { { true, true }, { true, true } };
 u64 castle_pos[2][2] = { { 0x0000000000000002ULL, 0x0000000000000040ULL }, { 0x0200000000000000ULL, 0x4000000000000000ULL } };
 u64 castle_masks[2][2] = { { 0x000000000000000EULL, 0x0000000000000060ULL }, { 0x0E00000000000000ULL, 0x6000000000000000ULL } };
 
-u64 enpassantable = 0;
+u64 enpassantable_mask = 0;
 
 u64 all_attacks[2] = { 0, 0 };
 
@@ -297,6 +297,10 @@ force_inline u64 get_all_pieces() {
     return colors[CWHITE] | colors[CBLACK];
 }
 
+force_inline bool piece_at(i32 index, piece_t piece){
+    return pieces[piece] & (1ull << index);
+}
+
 #define PIECE_CHECK(pcs, mask, piece)  (!!(pcs[(piece)] & (mask)))
 #define PIECE_HERE(pcs, mask, piece)   (PIECE_CHECK(pcs, mask, piece) * (piece))
 force_inline piece_t find_piece(bool black, i32 index){
@@ -318,6 +322,10 @@ force_inline piece_t find_piece_all(i32 index, bool* black){
     }
     *black = CBLACK;
     return find_piece(CBLACK, index);
+}
+force_inline void clear_piece(bool black, piece_t piece, i32 index){
+    CLEAR_BIT(pieces[piece], index);
+    CLEAR_BIT(colors[black], index);
 }
 force_inline void put_piece(bool black, piece_t piece, i32 index){
     PUT_BIT(pieces[piece], index);
@@ -372,7 +380,7 @@ u64 get_turns_m(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
     u64 all_pieces = color_pieces | other_pieces;
     u64 empties = ~all_pieces;
     u64 castle_blocks;
-    u64 pawn_attackable = other_pieces | enpassantable;
+    u64 pawn_attackable = other_pieces | enpassantable_mask;
     switch (piece){
     case PAWN:
         mask |= (((piece_mask << 7 & ~FILE_H) | (piece_mask << 9 & ~FILE_A)) &  (black - 1llu)                     //white side attacks
@@ -400,8 +408,8 @@ u64 get_turns_m(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
         }
         break; 
     case KING:
-        mask |= get_castling_mask(black, CASTLE_OOO, empties);
-        mask |= get_castling_mask(black, CASTLE_OO, empties);
+        mask |= get_castling_mask(black, CASTLE_OOO, empties)
+             |  get_castling_mask(black, CASTLE_OO, empties);
         mask |= (piece_mask << 1 & ~FILE_A) | (piece_mask << 7 & ~FILE_H) | (piece_mask << 8) | (piece_mask << 9 & ~FILE_A)
              |  (piece_mask >> 1 & ~FILE_H) | (piece_mask >> 7 & ~FILE_A) | (piece_mask >> 8) | (piece_mask >> 9 & ~FILE_H);
         break;
@@ -709,14 +717,24 @@ bool move_is_double_pawn_move(piece_e piece, i32 from, i32 to){
     if(piece != PAWN){
         return false;
     }
-    i32 diff = abs(from - to);
+    i32 diff = abs(to - from);
     return diff == 16;
+}
+bool move_is_enpassant(piece_e piece, i32 from, i32 to){
+    if(piece != PAWN){
+        return false;
+    }
+    i32 diff = abs(to - from);
+    if(diff != 7 && diff != 9){
+        return false;
+    }
+    return !piece_at(to, PAWN);
 }
 bool move_is_castling(piece_e piece, i32 from, i32 to){
     if(piece != KING){
         return false;
     }
-    i32 diff = abs(from - to);
+    i32 diff = abs(to - from);
     return diff == 3 || diff == 2; // pretty rudimentary castling checking
 }
 
@@ -729,8 +747,6 @@ void do_move(i32 new_index){
     
     last_turn[0] = selected_index;
     last_turn[1] = new_index;
-
-    move_piece(blacks_turn, selected_piece, selected_index, new_index);
 
     if(move_is_castling(selected_piece, selected_index, new_index)){
         if(new_index < selected_index){
@@ -753,10 +769,16 @@ void do_move(i32 new_index){
         }
     }
 
-    enpassantable = 0;
-    if(move_is_double_pawn_move(selected_piece, selected_index, new_index)){
-        enpassantable |= (1ull << (selected_index + ((new_index - selected_index) >> 1)));
+    if(move_is_enpassant(selected_piece, selected_index, new_index)){
+        clear_piece(!blacks_turn, PAWN, new_index + 8 * sign(selected_index - new_index));
     }
+
+    enpassantable_mask = 0;
+    if(move_is_double_pawn_move(selected_piece, selected_index, new_index)){
+        enpassantable_mask |= (1ull << (selected_index + ((new_index - selected_index) >> 1)));
+    }
+
+    move_piece(blacks_turn, selected_piece, selected_index, new_index);
 
     if(!check_promotion(new_index)){
         end_turn();
