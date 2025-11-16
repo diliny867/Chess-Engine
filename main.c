@@ -1,6 +1,7 @@
 
 
 #include "chess.h"
+#include "chess_visuals.h"
 
 int main(){
 
