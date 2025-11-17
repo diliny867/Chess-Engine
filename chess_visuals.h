@@ -242,6 +242,7 @@ void select_piece(i32 index){
     selected_turns = get_index_turns_m(selected_black, selected_index, selected_piece);
 }
 
+// pretty rudimentary special move checking
 bool move_is_double_pawn_move(piece_t piece, i32 from, i32 to){
     if(piece != PAWN){
         return false;
@@ -264,7 +265,7 @@ bool move_is_castling(piece_t piece, i32 from, i32 to){
         return false;
     }
     i32 diff = abs(to - from);
-    return diff == 3 || diff == 2; // pretty rudimentary castling checking
+    return diff == 3 || diff == 2;
 }
 
 void do_move(i32 new_index){
