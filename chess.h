@@ -444,41 +444,37 @@ u64 get_check_mask(bool black){
 
     u64 mask = 0;
     // these 2 shouldnt normally happen
-    if(BITCOUNT(bishops_mask) > 1){
-        while(bishops_mask){
-            mask |= rays[extract_piece(&bishops_mask)][king_index]; 
-        }
-        return mask;
-    }
-    if(BITCOUNT(rooks_mask) > 1){
-        while(rooks_mask){
-            mask |= rays[extract_piece(&rooks_mask)][king_index]; 
-        }
-        return mask;
-    }
-
-    // printf("%d %d %d\n", mask_to_index(bishops_mask), mask_to_index(rooks_mask), king_index);
-    // print_mask(rays[mask_to_index(bishops_mask)][king_index] | rays[mask_to_index(rooks_mask)][king_index]);
-    // printf("\n");
+    // if(BITCOUNT(bishops_mask) > 1){
+    //     while(bishops_mask){
+    //         mask |= rays[extract_piece(&bishops_mask)][king_index]; 
+    //     }
+    //     return mask;
+    // }
+    // if(BITCOUNT(rooks_mask) > 1){
+    //     while(rooks_mask){
+    //         mask |= rays[extract_piece(&rooks_mask)][king_index]; 
+    //     }
+    //     return mask;
+    // }
+    //printf("%llu %llu %d\n", bishops_mask, rooks_mask, king_index);
+    //printf("%d %d %d\n", mask_to_index(bishops_mask), mask_to_index(rooks_mask), king_index);
+    //print_mask(rays[mask_to_index(bishops_mask)][king_index] | rays[mask_to_index(rooks_mask)][king_index]);
+    //printf("\n");
+    // return rays[mask_to_index(bishops_mask)][king_index] | rays[mask_to_index(rooks_mask)][king_index];
 
     checkers[black] = bishops_mask | rooks_mask;
-
-    return rays[mask_to_index(bishops_mask)][king_index] | rays[mask_to_index(rooks_mask)][king_index];
-
     
-    // while(bishops_mask){
-    //     mask |= rays[extract_piece(&bishops_mask)][king_index]; 
-    // }
-    // while(rooks_mask){
-    //     mask |= rays[extract_piece(&rooks_mask)][king_index]; 
-    // }
-    // return mask;
+    while(bishops_mask){
+        mask |= rays[extract_piece(&bishops_mask)][king_index]; 
+    }
+    while(rooks_mask){
+        mask |= rays[extract_piece(&rooks_mask)][king_index]; 
+    }
+
+    return mask;
 }
 void calculate_check_evasion_mask(bool black){
     if(in_check(black, all_pseudo_attacks[!black])){
-        // printf("in check\n");
-        // print_mask(all_pseudo_attacks[!black]);
-        // printf("\n");
         check_masks[black] = get_check_mask(black);
     }else {
         check_masks[black] = ~0;
