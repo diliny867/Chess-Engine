@@ -423,7 +423,7 @@ force_inline void move_piece_m(bool black, piece_t piece, u64 m_from, u64 m_to){
 bool in_check(bool black, u64 mask){
     return (pieces[KING] & colors[black]) & mask;
 }
-u64 get_check_mask(bool black){
+u64 get_check_mask(bool black, u64* checkers_mask){
     u64 color_pieces = colors[black];
     u64 other_pieces = colors[!black];
     u64 king_mask = pieces[KING] & color_pieces;
@@ -438,31 +438,14 @@ u64 get_check_mask(bool black){
 
     bishops_mask = (pieces[BISHOP] | pieces[QUEEN]) & other_pieces & bishop_moves(all_pieces, king_index);  
     rooks_mask   = (pieces[ROOK]   | pieces[QUEEN]) & other_pieces & rook_moves(  all_pieces, king_index);
-    if(bishops_mask && rooks_mask){
-        return ~all_pseudo_attacks[!black];
-    }
+    // if(bishops_mask && rooks_mask){
+    //     return ~all_pseudo_attacks[!black];
+    // }
 
     u64 mask = 0;
-    // these 2 shouldnt normally happen
-    // if(BITCOUNT(bishops_mask) > 1){
-    //     while(bishops_mask){
-    //         mask |= rays[extract_piece(&bishops_mask)][king_index]; 
-    //     }
-    //     return mask;
-    // }
-    // if(BITCOUNT(rooks_mask) > 1){
-    //     while(rooks_mask){
-    //         mask |= rays[extract_piece(&rooks_mask)][king_index]; 
-    //     }
-    //     return mask;
-    // }
-    //printf("%llu %llu %d\n", bishops_mask, rooks_mask, king_index);
-    //printf("%d %d %d\n", mask_to_index(bishops_mask), mask_to_index(rooks_mask), king_index);
-    //print_mask(rays[mask_to_index(bishops_mask)][king_index] | rays[mask_to_index(rooks_mask)][king_index]);
-    //printf("\n");
-    // return rays[mask_to_index(bishops_mask)][king_index] | rays[mask_to_index(rooks_mask)][king_index];
 
-    checkers[black] = bishops_mask | rooks_mask;
+    if(checkers_mask)
+        *checkers_mask = bishops_mask | rooks_mask;
     
     while(bishops_mask){
         mask |= rays[extract_piece(&bishops_mask)][king_index]; 
@@ -475,7 +458,7 @@ u64 get_check_mask(bool black){
 }
 void calculate_check_evasion_mask(bool black){
     if(in_check(black, all_pseudo_attacks[!black])){
-        check_masks[black] = get_check_mask(black);
+        check_masks[black] = get_check_mask(black, &checkers[black]);
     }else {
         check_masks[black] = ~0;
     }
@@ -583,7 +566,8 @@ u64 get_pseudo_legal_attack(bool black, u64 piece_mask, piece_t piece){
         mask  = kings_attack(black, piece_mask);
         break;
     }
-    return mask & ~color_pieces;
+    //return mask & ~color_pieces;
+    return mask; // dont & ~color_pieces so king cant capture defended piece
 }
 
 u64 get_legal_attack(bool black, u64 piece_mask, piece_t piece){ // todo: check
@@ -617,7 +601,8 @@ u64 get_legal_attack(bool black, u64 piece_mask, piece_t piece){ // todo: check
         break; 
     case KING:
         mask  = kings_attack(black, piece_mask); // king cant get pinned
-        check_mask = checkers[black] | (check_mask == ~0 ? check_mask : ~check_mask);
+        // check_mask = checkers[black] | ((check_mask == ~0 ? ~0 : ~check_mask) & ~all_pseudo_attacks[!black]);
+        check_mask = ~all_pseudo_attacks[!black];
         break;
     }
     return mask & ~color_pieces & check_mask;
@@ -644,25 +629,28 @@ void calculate_attacks(bool black){
     }
 }
 force_inline void calculate_all_attacks(){
-    calculate_pseudo_legal_attacks(CWHITE); // first
-    calculate_pseudo_legal_attacks(CBLACK);
+    // calculate_pseudo_legal_attacks(CWHITE); // first
+    // calculate_pseudo_legal_attacks(CBLACK);
 
-    calculate_pinned(CWHITE);
-    calculate_pinned(CBLACK);
+    // calculate_pinned(CWHITE);
+    // calculate_pinned(CBLACK);
 
-    calculate_check_evasion_mask(CWHITE);
-    calculate_check_evasion_mask(CBLACK);
+    // calculate_check_evasion_mask(CWHITE);
+    // calculate_check_evasion_mask(CBLACK);
 
-    // calculate_pinned(blacks_turn);
-    // calculate_check_evasion_mask(blacks_turn);
+    // calculate_attacks(CWHITE); // last
+    // calculate_attacks(CBLACK);
 
-    calculate_attacks(CWHITE); // last
-    calculate_attacks(CBLACK);
+    // can not skip calculation for both sides
+    calculate_pseudo_legal_attacks(!blacks_turn); // first
+    calculate_pinned(blacks_turn);
+    calculate_check_evasion_mask(blacks_turn);
+    // calculate_attacks(blacks_turn); // last
 }
 
 // check if we can castle, then check with if all necessary for castling squares are free (at ==), then choose those squares (at *), then choose position 
-force_inline u64 get_castling_mask(bool black, bool castle_type){
-    return (castling_rights[black][castle_type] && ((castle_masks[black][castle_type] & empties & ~all_attacks[!black]) == castle_masks[black][castle_type])) 
+force_inline u64 get_castling_mask(bool black, bool castle_type){ // castling dont care if pinned piece cant go to attack, it still doest work, so can use pseudo attacks 
+    return (castling_rights[black][castle_type] && ((castle_masks[black][castle_type] & empties & ~all_pseudo_attacks[!black]) == castle_masks[black][castle_type])) 
            * castle_pos[black][castle_type];
 }
 
