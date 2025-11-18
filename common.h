@@ -22,6 +22,7 @@ typedef double f64;
 
 
 #define force_inline __attribute__((always_inline)) inline
+#define unreachable  __builtin_unreachable()
 
 #define min(a, b) (a) < (b) ? (a) : (b);
 #define max(a, b) (a) > (b) ? (a) : (b);
