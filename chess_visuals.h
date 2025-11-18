@@ -3,6 +3,9 @@
 #include "chess.h"
 
 #include "raylib.h"
+#include "raymath.h"
+
+#define RAD_TO_DEG 180.f /
 
 i32 mouse_x = 0;
 i32 mouse_y = 0;
@@ -21,6 +24,13 @@ bool in_promotion = false;
 i32 promoted_to = NUL_INDEX;
 i32 promotion_indexes[4] = { NUL_INDEX, NUL_INDEX, NUL_INDEX, NUL_INDEX };
 piece_t promotion_pieces[4] = { QUEEN, KNIGHT, ROOK, BISHOP };
+
+typedef struct {
+    i32 from, to;
+} arrow_t;
+arrow_t arrows[64 * 64] = { 0 };
+i32 arrows_count = 0;
+i32 selected_arrow = NUL_INDEX;
 
 // 128x128
 Texture2D piece_textures[CCOLOR_COUNT][PIECE_COUNT];
@@ -45,6 +55,8 @@ Sound notify_sound;
 #define SELECTED_MID   (Color){0x71, 0x81, 0x68, 0x4F}
 #define SELECTED_BLANK (Color){0x71, 0x81, 0x68, 0x00}
 #define SELECTED_COLOR (Color){0x71, 0x81, 0x68, 0xFF}
+//#define ARROW_COLOR    (Color){0x6D, 0x7F, 0x58, 0xAF}
+#define ARROW_COLOR    (Color){0xC7, 0xC1, 0x10, 0xAF}
 
 #define MOVE_HIGHLIGHT (Color){0xF7, 0xF1, 0x1D, 0x50}
 #define MOVE_HIGHLIGHT2 (Color){0x8B, 0xCE, 0xF7, 0x6F}
@@ -115,6 +127,24 @@ void draw_attacks(u64 mask){
         index = extract_piece(&mask);
         index_to_position(index, &x, &y);
         draw_attack(x + HALF_SQUARE_SIDE, y + HALF_SQUARE_SIDE);
+    }
+}
+void draw_arrow(i32 from, i32 to){
+    i32 xf, yf, xt, yt;
+    index_to_position(from, &xf, &yf);
+    if(from == to){
+        DrawRing((Vector2){ xf + HALF_SQUARE_SIDE, yf + HALF_SQUARE_SIDE }, 35, 40, 0, 360, 0, ARROW_COLOR);
+    }else {
+        index_to_position(to, &xt, &yt);
+        f32 size = hypotf(xt - xf, yt - yf) - 7;
+        f32 angle = Vector2LineAngle((Vector2){ xf, yf }, (Vector2){ xt, yt }) * RAD2DEG;
+        DrawRectanglePro((Rectangle){ xf + HALF_SQUARE_SIDE, yf + HALF_SQUARE_SIDE, size, 16 }, (Vector2){ 8, 8 }, -angle, ARROW_COLOR);
+        DrawPoly((Vector2){ xt + HALF_SQUARE_SIDE, yt + HALF_SQUARE_SIDE }, 3, 30, -angle, ARROW_COLOR);
+    }
+}
+void draw_arrows(){
+    for(i32 i = 0; i < arrows_count; i++){
+        draw_arrow(arrows[i].from, arrows[i].to);
     }
 }
 void draw_pieces(){
@@ -223,6 +253,27 @@ bool check_enter_promotion(i32 new_index){
     return false;
 }
 
+void start_arrow(i32 index){
+    selected_arrow = index;
+}
+void end_arrow(i32 index){
+    // find if arrow exists
+    for(i32 i = 0; i < arrows_count; i++){
+        if(arrows[i].from == selected_arrow && arrows[i].to == index){
+            arrows[i].from = arrows[arrows_count - 1].from;
+            arrows[i].to   = arrows[arrows_count - 1].to;
+            arrows_count--;
+            return;
+        }
+    }
+    arrows[arrows_count].from = selected_arrow;
+    arrows[arrows_count].to   = index;
+    arrows_count++;
+}
+void clear_arrows(){
+    arrows_count = 0;
+}
+
 void end_turn(){
     blacks_turn = !blacks_turn;
     setup_turn();
@@ -239,7 +290,7 @@ void select_piece(i32 index){
     if(selected_black == blacks_turn){
         dragged_piece = selected_piece;
     }
-    selected_turns = get_index_turns_m(selected_black, selected_index, selected_piece);
+    selected_turns = get_index_legal_turns(selected_black, selected_index, selected_piece);
 }
 
 // pretty rudimentary special move checking
@@ -325,11 +376,16 @@ void poll_events(){
     i32 new_index = hover_index;
     
     if(IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)){
+        start_arrow(new_index);
         in_promotion = false;
         deselect_piece();
     }
+    if(IsMouseButtonReleased(MOUSE_BUTTON_RIGHT)){
+        end_arrow(new_index);
+    }
 
     if(IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){
+        clear_arrows();
         if(in_promotion){
             for(i32 i = 0; i < 4; i++){
                 if(hover_index == promotion_indexes[i]){
@@ -375,6 +431,7 @@ void chess_run(){
             draw_board();
             draw_pieces();
             draw_selected();
+            draw_arrows();
             draw_promotion();
 
         EndDrawing();

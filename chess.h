@@ -464,6 +464,17 @@ void calculate_check_evasion_mask(bool black){
     }
 }
 
+bool is_checkmate(bool black){
+    if(!in_check(black, all_pseudo_attacks[!black])){
+        return false;
+    }
+
+    
+
+
+    return false;
+}
+
 u64 bishop_xray(bool black, i32 index){
     u64 blockers = colors[black]; // no point in also checking enemy pieces
     u64 mask = bishop_moves(all_pieces, index); 
@@ -512,38 +523,40 @@ u64 pawns_steps(bool black, u64 piece_mask){
     return ((((piece_mask << 8) | ((piece_mask & RANK_2) << 16) & (empties << 8)) &  (black - 1llu)                              //white side steps
          |   ((piece_mask >> 8) | ((piece_mask & RANK_7) >> 16) & (empties >> 8)) & ~(black - 1llu)) & empties) & ~color_pieces; //black side steps
 }
-u64 knights_attack(bool black, u64 piece_mask){
+u64 knights_attack(u64 piece_mask){
     return (piece_mask << 6 & ~FILE_GH) | (piece_mask << 10 & ~FILE_AB) | (piece_mask << 15 & ~FILE_H) | (piece_mask << 17 & ~FILE_A)
          | (piece_mask >> 6 & ~FILE_AB) | (piece_mask >> 10 & ~FILE_GH) | (piece_mask >> 15 & ~FILE_A) | (piece_mask >> 17 & ~FILE_H);
 }
-u64 bishops_attack(bool black, u64 piece_mask){
+u64 bishops_attack(u64 board, u64 piece_mask){
     u64 mask = 0;
     while(piece_mask){
-        mask |= bishop_moves(all_pieces, extract_piece(&piece_mask)); 
+        mask |= bishop_moves(board, extract_piece(&piece_mask)); 
     }
     return mask;
 }
-u64 rooks_attack(bool black, u64 piece_mask){
+u64 rooks_attack(u64 board, u64 piece_mask){
     u64 mask = 0;
     while(piece_mask){
-        mask |= rook_moves(all_pieces, extract_piece(&piece_mask)); 
+        mask |= rook_moves(board, extract_piece(&piece_mask)); 
     }
     return mask;
 }
-u64 queens_attack(bool black, u64 piece_mask){
+u64 queens_attack(u64 board, u64 piece_mask){
     u64 mask = 0;
     while(piece_mask){
-        mask |= queen_moves(all_pieces, extract_piece(&piece_mask)); 
+        mask |= queen_moves(board, extract_piece(&piece_mask)); 
     }
     return mask;
 }
-u64 kings_attack(bool black, u64 piece_mask){
+u64 kings_attack(u64 piece_mask){
     return (piece_mask << 1 & ~FILE_A) | (piece_mask << 7 & ~FILE_H) | (piece_mask << 8) | (piece_mask << 9 & ~FILE_A)
          | (piece_mask >> 1 & ~FILE_H) | (piece_mask >> 7 & ~FILE_A) | (piece_mask >> 8) | (piece_mask >> 9 & ~FILE_H);
 }
 
 u64 get_pseudo_legal_attack(bool black, u64 piece_mask, piece_t piece){
-    u64 color_pieces = colors[black];
+    //u64 color_pieces = colors[black];
+    u64 other_pieces = colors[!black];
+    u64 board;
     
     u64 mask = 0;
     switch (piece){
@@ -551,19 +564,22 @@ u64 get_pseudo_legal_attack(bool black, u64 piece_mask, piece_t piece){
         mask  = pawns_attack(black, piece_mask);
         break;
     case KNIGHT:
-        mask  = knights_attack(black, piece_mask);
+        mask  = knights_attack(piece_mask);
         break;
-    case BISHOP:
-        mask  = bishops_attack(black, piece_mask);
+    case BISHOP: // exclude enemy king from calculating attacks for sliders
+        board = all_pieces ^ (pieces[KING] & other_pieces);
+        mask  = bishops_attack(board, piece_mask);
         break;
     case ROOK:
-        mask  = rooks_attack(black, piece_mask);
+        board = all_pieces ^ (pieces[KING] & other_pieces);
+        mask  = rooks_attack(board, piece_mask);
         break;
     case QUEEN:
-        mask  = queens_attack(black, piece_mask);
+        board = all_pieces ^ (pieces[KING] & other_pieces);
+        mask  = queens_attack(board, piece_mask);
         break; 
     case KING:
-        mask  = kings_attack(black, piece_mask);
+        mask  = kings_attack(piece_mask);
         break;
     }
     //return mask & ~color_pieces;
@@ -572,6 +588,7 @@ u64 get_pseudo_legal_attack(bool black, u64 piece_mask, piece_t piece){
 
 u64 get_legal_attack(bool black, u64 piece_mask, piece_t piece){ // todo: check
     u64 color_pieces = colors[black];
+    //u64 other_pieces = colors[!black];
     u64 pinned = pinneds[black] & pieces[piece];
     u64 pinned_mask = pinned_masks[black];
     u64 nonpinned = piece_mask & ~pinned;
@@ -584,24 +601,23 @@ u64 get_legal_attack(bool black, u64 piece_mask, piece_t piece){ // todo: check
         mask |= pawns_attack(black, pinned) & pinned_mask;
         break;
     case KNIGHT:
-        mask  = knights_attack(black, nonpinned);
-        mask |= knights_attack(black, pinned) & pinned_mask;
+        mask  = knights_attack(nonpinned);
+        mask |= knights_attack(pinned) & pinned_mask;
         break;
     case BISHOP:
-        mask  = bishops_attack(black, nonpinned);
-        mask |= bishops_attack(black, pinned) & pinned_mask;
+        mask  = bishops_attack(all_pieces, nonpinned);
+        mask |= bishops_attack(all_pieces, pinned) & pinned_mask;
         break;
     case ROOK:
-        mask  = rooks_attack(black, nonpinned);
-        mask |= rooks_attack(black, pinned) & pinned_mask;
+        mask  = rooks_attack(all_pieces, nonpinned);
+        mask |= rooks_attack(all_pieces, pinned) & pinned_mask;
         break;
     case QUEEN:
-        mask  = queens_attack(black, nonpinned);
-        mask |= queens_attack(black, pinned) & pinned_mask;
+        mask  = queens_attack(all_pieces, nonpinned);
+        mask |= queens_attack(all_pieces, pinned) & pinned_mask;
         break; 
     case KING:
-        mask  = kings_attack(black, piece_mask); // king cant get pinned
-        // check_mask = checkers[black] | ((check_mask == ~0 ? ~0 : ~check_mask) & ~all_pseudo_attacks[!black]);
+        mask  = kings_attack(piece_mask); // king cant get pinned
         check_mask = ~all_pseudo_attacks[!black];
         break;
     }
@@ -641,11 +657,13 @@ force_inline void calculate_all_attacks(){
     // calculate_attacks(CWHITE); // last
     // calculate_attacks(CBLACK);
 
-    // can not skip calculation for both sides
+
+    // can skip calculation for both sides
     calculate_pseudo_legal_attacks(!blacks_turn); // first
-    calculate_pinned(blacks_turn);
-    calculate_check_evasion_mask(blacks_turn);
-    // calculate_attacks(blacks_turn); // last
+    calculate_pseudo_legal_attacks(blacks_turn);  // for correct enemy turn visualisation
+    calculate_pinned(blacks_turn);                // for legal turns
+    calculate_check_evasion_mask(blacks_turn);    // for legal turns
+    // calculate_attacks(blacks_turn);            // last
 }
 
 // check if we can castle, then check with if all necessary for castling squares are free (at ==), then choose those squares (at *), then choose position 
@@ -654,32 +672,33 @@ force_inline u64 get_castling_mask(bool black, bool castle_type){ // castling do
            * castle_pos[black][castle_type];
 }
 
-u64 get_turns_m(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
+u64 get_legal_turns(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
     u64 color_pieces = colors[black];
     u64 pinned = pinneds[black] & pieces[piece];
     u64 pinned_mask = pinned_masks[black];
     u64 nonpinned = piece_mask & ~pinned;
+    u64 check_mask = check_masks[black];
 
     u64 mask = get_legal_attack(black, piece_mask, piece);
     if(piece == PAWN){
-        mask |= pawns_steps(black, nonpinned);
-        mask |= pawns_steps(black, pinned) & pinned_mask;
-    }else if(piece == KING){
+        mask |= (pawns_steps(black, nonpinned)
+             |   pawns_steps(black, pinned) & pinned_mask) & check_mask;
+    }else if(piece == KING && !in_check(black, all_pseudo_attacks[!black])){
         mask |= (get_castling_mask(black, CASTLE_OOO)
              |   get_castling_mask(black, CASTLE_OO)) & ~color_pieces;
     }
     return mask;
 }
-u64 get_color_turns_m(bool black){
+u64 get_color_legal_turns(bool black){
     u64 color = colors[black];
     u64 mask = 0;
     for(piece_t piece = PAWN; piece <= KING; piece++){
-        mask |= get_turns_m(black, pieces[piece] & color, piece);
+        mask |= get_legal_turns(black, pieces[piece] & color, piece);
     }
     return mask;
 }
-force_inline u64 get_index_turns_m(bool black, i32 index, piece_t piece){
-    return get_turns_m(black, 1ull << index, piece);
+force_inline u64 get_index_legal_turns(bool black, i32 index, piece_t piece){
+    return get_legal_turns(black, 1ull << index, piece);
 }
 
 force_inline void promote(bool black, i32 index, piece_t piece){
