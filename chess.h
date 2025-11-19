@@ -121,13 +121,12 @@ typedef enum{
     CASTLE_OOO = 0, // queenside
     CASTLE_OO       // kingside
 } castling_e;
-bool castling_rights[CCOLOR_COUNT][2] = { { true, true }, { true, true } };
+bool lost_castling_rights[CCOLOR_COUNT][2] = { 0 };
 u64 castle_pos[CCOLOR_COUNT][2] = { { 0x0000000000000002ULL, 0x0000000000000040ULL }, { 0x0200000000000000ULL, 0x4000000000000000ULL } };
 u64 castle_masks[CCOLOR_COUNT][2] = { { 0x000000000000000EULL, 0x0000000000000060ULL }, { 0x0E00000000000000ULL, 0x6000000000000000ULL } };
 
 u64 enpassantable_mask = 0;
 
-u64 color_pieces[CCOLOR_COUNT] = { 0 };
 u64 all_pieces = 0;
 u64 empties = 0;
 
@@ -135,7 +134,6 @@ u64 pinneds[CCOLOR_COUNT] = { 0 };
 u64 pinned_masks[CCOLOR_COUNT] = { 0 };
 
 u64 check_masks[CCOLOR_COUNT] = { 0 };
-u64 checkers[CCOLOR_COUNT] = { 0 };
 
 u64 attacks[CCOLOR_COUNT][PIECE_COUNT] = { 0 };
 u64 all_attacks[CCOLOR_COUNT] = { 0 };
@@ -358,13 +356,13 @@ force_inline u64 get_all_pieces() {
     return colors[CWHITE] | colors[CBLACK];
 }
 
-force_inline bool piece_at(i32 index, piece_t piece){
-    return GET_BIT(pieces[piece], index);
+force_inline u64 find_piece(bool black, piece_t piece){
+    return mask_to_index(pieces[piece] & colors[black]);
 }
 
 #define PIECE_CHECK(pcs, mask, piece)  (!!(pcs[(piece)] & (mask)))
 #define PIECE_HERE(pcs, mask, piece)   (PIECE_CHECK(pcs, mask, piece) * (piece))
-force_inline piece_t find_piece(bool black, i32 index){
+force_inline piece_t piece_at(bool black, i32 index){
     u64 mask = colors[black] & (1ull << index);
     if(mask == 0){
         return NO_PIECE;
@@ -375,14 +373,14 @@ force_inline piece_t find_piece(bool black, i32 index){
     return val;
 }
 
-force_inline piece_t find_piece_all(i32 index, bool* black){
-    piece_t piece = find_piece(CWHITE, index);
+force_inline piece_t piece_at_all(i32 index, bool* black){
+    piece_t piece = piece_at(CWHITE, index);
     if(piece != NO_PIECE){
         *black = CWHITE;
         return piece;
     }
     *black = CBLACK;
-    return find_piece(CBLACK, index);
+    return piece_at(CBLACK, index);
 }
 force_inline void clear_piece(bool black, piece_t piece, i32 index){
     CLEAR_BIT(pieces[piece], index);
@@ -404,7 +402,7 @@ force_inline void move_piece(bool black, piece_t piece, i32 from, i32 to){
     PUT_BITS(colors[black], to_mask);
 }
 force_inline void move_piece_unknown(bool black, i32 from, i32 to){
-    piece_t piece = find_piece(black, from);
+    piece_t piece = piece_at(black, from);
     assert(piece != NO_PIECE);
     move_piece(black, piece, from, to);
 }
@@ -423,7 +421,7 @@ force_inline void move_piece_m(bool black, piece_t piece, u64 m_from, u64 m_to){
 bool in_check(bool black, u64 mask){
     return (pieces[KING] & colors[black]) & mask;
 }
-u64 get_check_mask(bool black, u64* checkers_mask){
+u64 get_check_mask(bool black){
     u64 color_pieces = colors[black];
     u64 other_pieces = colors[!black];
     u64 king_mask = pieces[KING] & color_pieces;
@@ -431,7 +429,7 @@ u64 get_check_mask(bool black, u64* checkers_mask){
 
     // seems like only max of two types of pieces can double check, so can get away with xor
     if(king_mask & ~(pseudo_attacks[!black][PAWN] ^ pseudo_attacks[!black][KNIGHT] ^ pseudo_attacks[!black][BISHOP] ^ pseudo_attacks[!black][ROOK] ^ pseudo_attacks[!black][QUEEN])){
-        return ~all_pseudo_attacks[!black];
+        return all_pseudo_attacks[!black];
     }
 
     u64 bishops_mask, rooks_mask;
@@ -443,9 +441,6 @@ u64 get_check_mask(bool black, u64* checkers_mask){
     // }
 
     u64 mask = 0;
-
-    if(checkers_mask)
-        *checkers_mask = bishops_mask | rooks_mask;
     
     while(bishops_mask){
         mask |= rays[extract_piece(&bishops_mask)][king_index]; 
@@ -454,25 +449,14 @@ u64 get_check_mask(bool black, u64* checkers_mask){
         mask |= rays[extract_piece(&rooks_mask)][king_index]; 
     }
 
-    return mask;
+    return ~mask;
 }
 void calculate_check_evasion_mask(bool black){
     if(in_check(black, all_pseudo_attacks[!black])){
-        check_masks[black] = get_check_mask(black, &checkers[black]);
+        check_masks[black] = get_check_mask(black);
     }else {
-        check_masks[black] = ~0;
+        check_masks[black] = 0;
     }
-}
-
-bool is_checkmate(bool black){
-    if(!in_check(black, all_pseudo_attacks[!black])){
-        return false;
-    }
-
-    
-
-
-    return false;
 }
 
 u64 bishop_xray(bool black, i32 index){
@@ -592,7 +576,7 @@ u64 get_legal_attack(bool black, u64 piece_mask, piece_t piece){ // todo: check
     u64 pinned = pinneds[black] & pieces[piece];
     u64 pinned_mask = pinned_masks[black];
     u64 nonpinned = piece_mask & ~pinned;
-    u64 check_mask = check_masks[black];
+    u64 check_mask = ~check_masks[black];
     
     u64 mask = 0;
     switch (piece){
@@ -668,7 +652,7 @@ force_inline void calculate_all_attacks(){
 
 // check if we can castle, then check with if all necessary for castling squares are free (at ==), then choose those squares (at *), then choose position 
 force_inline u64 get_castling_mask(bool black, bool castle_type){ // castling dont care if pinned piece cant go to attack, it still doest work, so can use pseudo attacks 
-    return (castling_rights[black][castle_type] && ((castle_masks[black][castle_type] & empties & ~all_pseudo_attacks[!black]) == castle_masks[black][castle_type])) 
+    return (!lost_castling_rights[black][castle_type] && ((castle_masks[black][castle_type] & empties & ~all_pseudo_attacks[!black]) == castle_masks[black][castle_type])) 
            * castle_pos[black][castle_type];
 }
 
@@ -677,7 +661,7 @@ u64 get_legal_turns(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
     u64 pinned = pinneds[black] & pieces[piece];
     u64 pinned_mask = pinned_masks[black];
     u64 nonpinned = piece_mask & ~pinned;
-    u64 check_mask = check_masks[black];
+    u64 check_mask = ~check_masks[black];
 
     u64 mask = get_legal_attack(black, piece_mask, piece);
     if(piece == PAWN){
@@ -700,6 +684,16 @@ u64 get_color_legal_turns(bool black){
 force_inline u64 get_index_legal_turns(bool black, i32 index, piece_t piece){
     return get_legal_turns(black, 1ull << index, piece);
 }
+
+bool is_checkmate(bool black){
+    if(!in_check(black, all_pseudo_attacks[!black])){
+        return false;
+    }
+
+    // todo: do better
+    return !get_color_legal_turns(black); // if any turns, then not checkmate
+}
+
 
 force_inline void promote(bool black, i32 index, piece_t piece){
     CLEAR_BIT(pieces[PAWN], index);
@@ -734,6 +728,16 @@ void setup_turn(){
 void clear_board(){
     memset(pieces, 0, sizeof(pieces));
     memset(colors, 0, sizeof(colors));
+    memset(lost_castling_rights, 0, sizeof(lost_castling_rights));
+    memset(pinneds, 0, sizeof(pinneds));
+    memset(pinned_masks, 0, sizeof(pinned_masks));
+    memset(check_masks, 0, sizeof(check_masks));
+    memset(attacks, 0, sizeof(attacks));
+    memset(all_attacks, 0, sizeof(all_attacks));
+    memset(pseudo_attacks, 0, sizeof(pseudo_attacks));
+    memset(all_pseudo_attacks, 0, sizeof(all_pseudo_attacks));
+    enpassantable_mask = 0;
+    blacks_turn = false;
 }
 void setup_board(){
     clear_board();

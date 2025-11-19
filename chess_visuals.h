@@ -5,7 +5,6 @@
 #include "raylib.h"
 #include "raymath.h"
 
-#define RAD_TO_DEG 180.f /
 
 i32 mouse_x = 0;
 i32 mouse_y = 0;
@@ -31,6 +30,10 @@ typedef struct {
 arrow_t arrows[64 * 64] = { 0 };
 i32 arrows_count = 0;
 i32 selected_arrow = NUL_INDEX;
+arrow_t dragged_arrow = { 0, 0 };
+bool doing_arrow = false;
+
+bool checkmated = false;
 
 // 128x128
 Texture2D piece_textures[CCOLOR_COUNT][PIECE_COUNT];
@@ -60,6 +63,11 @@ Sound notify_sound;
 
 #define MOVE_HIGHLIGHT (Color){0xF7, 0xF1, 0x1D, 0x50}
 #define MOVE_HIGHLIGHT2 (Color){0x8B, 0xCE, 0xF7, 0x6F}
+
+#define MATE_HIGHLIGHT (Color){0xE8, 0x11, 0x23, 0x6F}
+#define MATE_TINT      (Color){0xFF, 0xFF, 0xFF, 0x2F}
+#define WHITE_WON_TEXT (Color){0xEF, 0xEF, 0xEF, 0xFF}
+#define BLACK_WON_TEXT (Color){0x10, 0x10, 0x10, 0xFF}
 
 Texture2D load_texture(char* file_path){
     Texture2D texture = LoadTexture(file_path);
@@ -146,6 +154,9 @@ void draw_arrows(){
     for(i32 i = 0; i < arrows_count; i++){
         draw_arrow(arrows[i].from, arrows[i].to);
     }
+    if(doing_arrow){
+        draw_arrow(dragged_arrow.from, dragged_arrow.to);
+    }
 }
 void draw_pieces(){
     for(i32 i = 0; i < CCOLOR_COUNT; i++){
@@ -207,6 +218,23 @@ void draw_board() {
     DrawTextureRec(board_texture.texture, (Rectangle){ 0, 0, (f32)board_texture.texture.width, (f32)-board_texture.texture.height }, (Vector2){ 0, 0 }, WHITE);
 }
 
+void draw_text_centered(char* text, i32 x, i32 y, i32 font_size, Color color){
+    i32 text_width = MeasureText(text, font_size);
+    i32 textx = x - text_width / 2;
+    i32 texty = y - font_size / 2;
+    DrawText(text, textx, texty, font_size, color);
+}
+
+void draw_checkmated(){
+    i32 king_index = find_piece(blacks_turn, KING);
+    draw_square_by_index(king_index, MATE_HIGHLIGHT);
+    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, MATE_TINT);
+    char text[20];
+    sprintf(text, "%s Won", blacks_turn ? "White" : "Black");
+    draw_text_centered(text, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 120, blacks_turn ? WHITE_WON_TEXT : BLACK_WON_TEXT);
+    draw_text_centered("Press ENTER to restart", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 120, 40, blacks_turn ? WHITE_WON_TEXT : BLACK_WON_TEXT);
+}
+
 void draw_init(){
     SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Chess");
@@ -255,6 +283,7 @@ bool check_enter_promotion(i32 new_index){
 
 void start_arrow(i32 index){
     selected_arrow = index;
+    doing_arrow = true;
 }
 void end_arrow(i32 index){
     // find if arrow exists
@@ -269,14 +298,21 @@ void end_arrow(i32 index){
     arrows[arrows_count].from = selected_arrow;
     arrows[arrows_count].to   = index;
     arrows_count++;
+    doing_arrow = false;
 }
 void clear_arrows(){
     arrows_count = 0;
+    doing_arrow = false;
 }
 
 void end_turn(){
     blacks_turn = !blacks_turn;
     setup_turn();
+    if(is_checkmate(blacks_turn)){
+        checkmated = true;
+        PlaySound(notify_sound);
+        return;
+    }
 }
 
 void deselect_piece(){
@@ -286,7 +322,7 @@ void deselect_piece(){
 }
 void select_piece(i32 index){
     selected_index = index;
-    selected_piece = find_piece_all(selected_index, &selected_black);
+    selected_piece = piece_at_all(selected_index, &selected_black);
     if(selected_black == blacks_turn){
         dragged_piece = selected_piece;
     }
@@ -338,15 +374,15 @@ void do_move(i32 new_index){
     }
 
     if(selected_piece == KING){
-        castling_rights[blacks_turn][CASTLE_OOO] = false;
-        castling_rights[blacks_turn][CASTLE_OO] = false;
+        lost_castling_rights[blacks_turn][CASTLE_OOO] = true;
+        lost_castling_rights[blacks_turn][CASTLE_OO] = true;
     }
     if(selected_piece == ROOK){
         if(selected_index == 0 || selected_index == 56){
-            castling_rights[blacks_turn][CASTLE_OOO] = false;
+            lost_castling_rights[blacks_turn][CASTLE_OOO] = true;
         }
         else if(selected_index == 7 || selected_index == 63){
-            castling_rights[blacks_turn][CASTLE_OO] = false;
+            lost_castling_rights[blacks_turn][CASTLE_OO] = true;
         }
     }
 
@@ -366,6 +402,16 @@ void do_move(i32 new_index){
     deselect_piece();
 }
 
+void restart_game(){
+    checkmated = false;
+    blacks_turn = false;
+    arrows_count = 0;
+    last_turn[0] = NUL_INDEX;
+    last_turn[1] = NUL_INDEX;
+    setup_board();
+    setup_turn();
+}
+
 void poll_events(){
     mouse_x = GetMouseX();
     mouse_y = GetMouseY();
@@ -373,15 +419,36 @@ void poll_events(){
     mouse_right = IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
     hover_index = position_to_index(mouse_x, mouse_y);
 
+    if(checkmated){
+        if(IsKeyPressed(KEY_ENTER)){
+            if(checkmated){
+                PlaySound(notify_sound);
+                restart_game();
+            }   
+        }
+        return;
+    }
+
     i32 new_index = hover_index;
     
     if(IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)){
-        start_arrow(new_index);
+        //if(selected_index == NUL_INDEX){
+            start_arrow(new_index);
+            dragged_arrow.from = new_index;
+        //}
         in_promotion = false;
         deselect_piece();
     }
+    if(IsMouseButtonDown(MOUSE_BUTTON_RIGHT)){
+        if(doing_arrow){
+            dragged_arrow.to = new_index;
+        }
+    }
     if(IsMouseButtonReleased(MOUSE_BUTTON_RIGHT)){
-        end_arrow(new_index);
+        if(doing_arrow){
+            end_arrow(new_index);
+        }
+        doing_arrow = false;
     }
 
     if(IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){
@@ -413,9 +480,9 @@ void poll_events(){
         dragged_piece = NO_PIECE;
     }
     
-    if(IsKeyPressed(KEY_SPACE)){
-        printf("%d %d %d\n", selected_index, selected_piece, (i32)selected_black);
-    }
+    // if(IsKeyPressed(KEY_SPACE)){
+    //     printf("%d %d %d\n", selected_index, selected_piece, (i32)selected_black);
+    // }
 }
 
 void chess_run(){
@@ -433,6 +500,10 @@ void chess_run(){
             draw_selected();
             draw_arrows();
             draw_promotion();
+
+            if(checkmated){
+                draw_checkmated();
+            }
 
         EndDrawing();
     }
