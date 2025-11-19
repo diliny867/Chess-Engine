@@ -73,18 +73,18 @@ typedef enum{
 #define EDGES  0xFF818181818181FFULL
 
 
-#define PUT_BITS(value, mask)      ((value) |=  (mask))
-#define AND_BITS(value, mask)      ((value) &=  (mask))
-#define TOGGLE_BITS(value, mask)   ((value) ^=  (mask))
-#define CLEAR_BITS(value, mask)    ((value) &= ~(mask))
-#define GET_BITS(value, mask)      ((value) &   (mask))
+#define put_bits(value, mask)      ((value) |=  (mask))
+#define and_bits(value, mask)      ((value) &=  (mask))
+#define toggle_bits(value, mask)   ((value) ^=  (mask))
+#define clear_bits(value, mask)    ((value) &= ~(mask))
+#define get_bits(value, mask)      ((value) &   (mask))
 
-#define PUT_BIT(value, index)    PUT_BITS((value),    1ull << (index))
-#define TOGGLE_BIT(value, index) TOGGLE_BITS((value), 1ull << (index))
-#define CLEAR_BIT(value, index)  CLEAR_BITS((value),  1ull << (index))
-#define GET_BIT(value, index)    GET_BITS((value),    1ull << (index))
+#define put_bit(value, index)    put_bits((value),    1ull << (index))
+#define toggle_bit(value, index) toggle_bits((value), 1ull << (index))
+#define clear_bit(value, index)  clear_bits((value),  1ull << (index))
+#define get_bit(value, index)    get_bits((value),    1ull << (index))
 
-#define EXPAND_FULL(value) (~(value) + 1)
+#define expand_full(value) (~(value) + 1)
 
 #define PAWN_VALUE   100
 #define KNIGHT_VALUE 295
@@ -95,8 +95,9 @@ typedef enum{
 i64 piece_values[PIECE_COUNT] = { PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_VALUE, QUEEN_VALUE, KING_VALUE };
 
 
-#define LSB_ZEROS(val) __builtin_ctzll(val)
-#define BITCOUNT(val) __builtin_popcountll(val)
+#define lsb_zeros(val) __builtin_ctzll(val)
+#define bit_count(val) __builtin_popcountll(val)
+#define zero_array(val) memset(val, 0, sizeof(val))
 
 #define sign(val) (((val) > 0) - ((val) < 0))
 
@@ -125,7 +126,7 @@ bool lost_castling_rights[CCOLOR_COUNT][2] = { 0 };
 u64 castle_pos[CCOLOR_COUNT][2] = { { 0x0000000000000002ULL, 0x0000000000000040ULL }, { 0x0200000000000000ULL, 0x4000000000000000ULL } };
 u64 castle_masks[CCOLOR_COUNT][2] = { { 0x000000000000000EULL, 0x0000000000000060ULL }, { 0x0E00000000000000ULL, 0x6000000000000000ULL } };
 
-u64 enpassantable_mask = 0;
+u64 enpassantable[CCOLOR_COUNT] = { 0, 0 };
 
 u64 all_pieces = 0;
 u64 empties = 0;
@@ -159,11 +160,11 @@ bool blacks_turn = false;
 //             // go in diagonal directions
 //             starting_bit = r > 0 ? r << 3 : f;
 //             for(i32 i = 0; i < diagonal_len; i++){
-//                 PUT_BIT(diagonal, starting_bit + i * 9);
+//                 put_bit(diagonal, starting_bit + i * 9);
 //             }
 //             starting_bit = r > 0 ? r << 3 + 7 : f;
 //             for(i32 i = 0; i < anti_diagonal_len; i++){
-//                 PUT_BIT(anti_diagonal, starting_bit + i * 7);
+//                 put_bit(anti_diagonal, starting_bit + i * 7);
 //             }        
 //
 //             bishop_masks[(r << 3) + f] = (diagonal | anti_diagonal) & ~EDGES;
@@ -193,7 +194,7 @@ u64 rook_table[64][4096];
 
 
 force_inline i32 pop_lsb(u64* val){
-    i32 i = LSB_ZEROS(*val);
+    i32 i = lsb_zeros(*val);
     *val &= *val - 1;
     return i;
 }
@@ -201,7 +202,7 @@ force_inline i32 extract_piece(u64* piece_mask){
     return pop_lsb(piece_mask);
 }
 force_inline i32 mask_to_index(u64 piece_mask){
-    return LSB_ZEROS(piece_mask);
+    return lsb_zeros(piece_mask);
 }
 
 u64 next_subset(u64 subset, u64 set){
@@ -325,7 +326,7 @@ u64 gen_ray(i32 from, i32 to){ // non horizontal/vertical/diagonal will be 0
     }
     u64 mask = 0;
     while(from != to){
-        PUT_BIT(mask, from);
+        put_bit(mask, from);
         from += direction;
     }
     return mask;
@@ -383,23 +384,23 @@ force_inline piece_t piece_at_all(i32 index, bool* black){
     return piece_at(CBLACK, index);
 }
 force_inline void clear_piece(bool black, piece_t piece, i32 index){
-    CLEAR_BIT(pieces[piece], index);
-    CLEAR_BIT(colors[black], index);
+    clear_bit(pieces[piece], index);
+    clear_bit(colors[black], index);
 }
 force_inline void put_piece(bool black, piece_t piece, i32 index){
-    PUT_BIT(pieces[piece], index);
-    PUT_BIT(colors[black], index);
+    put_bit(pieces[piece], index);
+    put_bit(colors[black], index);
 }
 force_inline void move_piece(bool black, piece_t piece, i32 from, i32 to){
-    CLEAR_BIT(pieces[piece], from);
-    CLEAR_BIT(colors[black], from);
+    clear_bit(pieces[piece], from);
+    clear_bit(colors[black], from);
     u64 to_mask = 1ull << to;
-    CLEAR_BITS(colors[!black], to_mask);
+    clear_bits(colors[!black], to_mask);
     for(i32 i = 0; i < PIECE_COUNT; i++){
-        CLEAR_BITS(pieces[i], to_mask);
+        clear_bits(pieces[i], to_mask);
     }
-    PUT_BITS(pieces[piece], to_mask);
-    PUT_BITS(colors[black], to_mask);
+    put_bits(pieces[piece], to_mask);
+    put_bits(colors[black], to_mask);
 }
 force_inline void move_piece_unknown(bool black, i32 from, i32 to){
     piece_t piece = piece_at(black, from);
@@ -408,14 +409,14 @@ force_inline void move_piece_unknown(bool black, i32 from, i32 to){
 }
 
 force_inline void put_piece_m(bool black, piece_t piece, u64 mask){
-    PUT_BITS(pieces[piece], mask);
-    PUT_BITS(colors[black], mask);
+    put_bits(pieces[piece], mask);
+    put_bits(colors[black], mask);
 }
 force_inline void move_piece_m(bool black, piece_t piece, u64 m_from, u64 m_to){
-    CLEAR_BITS(pieces[piece], m_from);
-    CLEAR_BITS(colors[black], m_from);
-    PUT_BITS(pieces[piece], m_to);
-    PUT_BITS(colors[black], m_to);
+    clear_bits(pieces[piece], m_from);
+    clear_bits(colors[black], m_from);
+    put_bits(pieces[piece], m_to);
+    put_bits(colors[black], m_to);
 }
 
 bool in_check(bool black, u64 mask){
@@ -482,7 +483,7 @@ void calculate_pinned(bool black){
         index = pop_lsb(&pinners);
         pin_rays |= rays[index][king_index];
         pins = all_pieces & rays[index][king_index];
-        pinned |= (BITCOUNT(pins) == 2) * (pins & color_pieces); // choose pin if it is only one in line to king (source piece included in pins)
+        pinned |= (bit_count(pins) == 2) * (pins & color_pieces); // choose pin if it is only one in line to king (source piece included in pins)
     }
 
     pinners = rook_xray(black, king_index) & ((pieces[ROOK] | pieces[QUEEN]) & other_pieces);
@@ -490,7 +491,7 @@ void calculate_pinned(bool black){
         index = pop_lsb(&pinners);
         pin_rays |= rays[index][king_index];
         pins = all_pieces & rays[index][king_index];
-        pinned |= (BITCOUNT(pins) == 2) * (pins & color_pieces); // choose pin if it is only one in line to king (source piece included in pins)
+        pinned |= (bit_count(pins) == 2) * (pins & color_pieces); // choose pin if it is only one in line to king (source piece included in pins)
     }
 
     pinneds[black] = pinned;
@@ -498,7 +499,7 @@ void calculate_pinned(bool black){
 }
 
 u64 pawns_attack(bool black, u64 piece_mask){
-    u64 pawn_attackable = colors[!black] | enpassantable_mask;
+    u64 pawn_attackable = colors[!black] | enpassantable[!black];
     return (((piece_mask << 7 & ~FILE_H) | (piece_mask << 9 & ~FILE_A)) &  (black - 1llu)                      //white side attacks
          |  ((piece_mask >> 7 & ~FILE_A) | (piece_mask >> 9 & ~FILE_H)) & ~(black - 1llu)) & pawn_attackable;  //black side attacks
 }
@@ -696,8 +697,8 @@ bool is_checkmate(bool black){
 
 
 force_inline void promote(bool black, i32 index, piece_t piece){
-    CLEAR_BIT(pieces[PAWN], index);
-    PUT_BIT(pieces[piece], index);
+    clear_bit(pieces[PAWN], index);
+    put_bit(pieces[piece], index);
 }
 
 // i64 evaluate_values() {
@@ -736,7 +737,7 @@ void clear_board(){
     memset(all_attacks, 0, sizeof(all_attacks));
     memset(pseudo_attacks, 0, sizeof(pseudo_attacks));
     memset(all_pseudo_attacks, 0, sizeof(all_pseudo_attacks));
-    enpassantable_mask = 0;
+    memset(enpassantable, 0, sizeof(enpassantable));
     blacks_turn = false;
 }
 void setup_board(){

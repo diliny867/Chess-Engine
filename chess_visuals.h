@@ -102,6 +102,17 @@ i32 position_to_index(i32 x, i32 y){
     i32 index = x / SQUARE_SIDE + (((SCREEN_HEIGHT - y) / SQUARE_SIDE) << 3);
     return index;
 }
+
+bool is_piece_selected(){
+    return selected_piece != NO_PIECE;
+}
+bool is_selected(){
+    return selected_index != NUL_INDEX;
+}
+bool is_piece_dragging(){
+    return dragged_piece != NO_PIECE;
+}
+
 void draw_square(i32 x, i32 y, Color color){
     DrawRectangle(x, y, SQUARE_SIDE, SQUARE_SIDE, color);
 }
@@ -154,7 +165,7 @@ void draw_arrows(){
     for(i32 i = 0; i < arrows_count; i++){
         draw_arrow(arrows[i].from, arrows[i].to);
     }
-    if(doing_arrow){
+    if(doing_arrow && dragged_arrow.from != dragged_arrow.to){
         draw_arrow(dragged_arrow.from, dragged_arrow.to);
     }
 }
@@ -170,12 +181,12 @@ void draw_selected(){
         draw_square_by_index(last_turn[0], MOVE_HIGHLIGHT);
         draw_square_by_index(last_turn[1], MOVE_HIGHLIGHT);
     }
-    if(selected_index != NUL_INDEX){
+    if(is_selected()){
         draw_square_by_index(selected_index, SELECTED_TINT);
         draw_attacks(selected_turns);
     }
-    if(dragged_piece != NO_PIECE){   
-        if(GET_BIT(selected_turns, hover_index)){
+    if(is_piece_dragging()){   
+        if(get_bit(selected_turns, hover_index)){
             draw_square_by_index(hover_index, SELECTED_HOVER);
         }
         draw_piece(mouse_x - HALF_SQUARE_SIDE, mouse_y - HALF_SQUARE_SIDE, selected_black, dragged_piece);
@@ -266,7 +277,7 @@ void draw_clean(){
 }
 
 bool can_move(i32 new_index){
-    return GET_BIT(selected_turns, new_index) && selected_black == blacks_turn;
+    return get_bit(selected_turns, new_index) && selected_black == blacks_turn;
 }
 
 bool check_enter_promotion(i32 new_index){
@@ -356,7 +367,7 @@ bool move_is_castling(piece_t piece, i32 from, i32 to){
 }
 
 void do_move(i32 new_index){
-    if(GET_BIT(colors[!blacks_turn], new_index)){
+    if(get_bit(colors[!blacks_turn], new_index)){
         PlaySound(capture_sound);
     }else{
         PlaySound(move_sound);
@@ -390,9 +401,9 @@ void do_move(i32 new_index){
         clear_piece(!blacks_turn, PAWN, new_index + 8 * sign(selected_index - new_index));
     }
 
-    enpassantable_mask = 0;
+    memset(enpassantable, 0, sizeof(enpassantable));
     if(move_is_double_pawn_move(selected_piece, selected_index, new_index)){
-        enpassantable_mask |= (1ull << (selected_index + ((new_index - selected_index) >> 1)));
+        enpassantable[blacks_turn] |= (1ull << (selected_index + ((new_index - selected_index) >> 1)));
     }
 
     move_piece(blacks_turn, selected_piece, selected_index, new_index);
@@ -463,7 +474,7 @@ void poll_events(){
             }
             in_promotion = false;
             deselect_piece();
-        }else if(new_index != selected_index && selected_piece != NO_PIECE && can_move(new_index)){
+        }else if(is_piece_selected() && new_index != selected_index && can_move(new_index)){
             if(!check_enter_promotion(new_index)){
                 do_move(new_index);
             }
@@ -472,7 +483,7 @@ void poll_events(){
         }
     }
     if(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)){
-        if(new_index != selected_index && dragged_piece != NO_PIECE && can_move(new_index)){
+        if(is_piece_dragging() && new_index != selected_index && can_move(new_index)){
             if(!check_enter_promotion(new_index)){
                 do_move(new_index);
             }
