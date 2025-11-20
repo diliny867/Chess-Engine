@@ -33,7 +33,12 @@ i32 selected_arrow = NUL_INDEX;
 arrow_t dragged_arrow = { 0, 0 };
 bool doing_arrow = false;
 
-bool checkmated = false;
+typedef enum {
+    GAME = 0,
+    DRAW,
+    CHECKMATE
+} game_state_e;
+game_state_e game_state = GAME;
 
 // 128x128
 Texture2D piece_textures[CCOLOR_COUNT][PIECE_COUNT];
@@ -61,13 +66,14 @@ Sound notify_sound;
 //#define ARROW_COLOR    (Color){0x6D, 0x7F, 0x58, 0xAF}
 #define ARROW_COLOR    (Color){0xC7, 0xC1, 0x10, 0xAF}
 
-#define MOVE_HIGHLIGHT (Color){0xF7, 0xF1, 0x1D, 0x50}
+#define MOVE_HIGHLIGHT  (Color){0xF7, 0xF1, 0x1D, 0x50}
 #define MOVE_HIGHLIGHT2 (Color){0x8B, 0xCE, 0xF7, 0x6F}
 
-#define MATE_HIGHLIGHT (Color){0xE8, 0x11, 0x23, 0x6F}
-#define MATE_TINT      (Color){0xFF, 0xFF, 0xFF, 0x2F}
-#define WHITE_WON_TEXT (Color){0xEF, 0xEF, 0xEF, 0xFF}
-#define BLACK_WON_TEXT (Color){0x10, 0x10, 0x10, 0xFF}
+#define MATE_HIGHLIGHT  (Color){0xE8, 0x11, 0x23, 0x6F}
+#define MATE_TINT       (Color){0xFF, 0xFF, 0xFF, 0x2F}
+#define WHITE_WON_COLOR (Color){0xEF, 0xEF, 0xEF, 0xFF}
+#define BLACK_WON_COLOR (Color){0x10, 0x10, 0x10, 0xFF}
+#define DRAW_COLOR      (Color){0x70, 0x70, 0x70, 0xFF}
 
 Texture2D load_texture(char* file_path){
     Texture2D texture = LoadTexture(file_path);
@@ -236,14 +242,14 @@ void draw_text_centered(char* text, i32 x, i32 y, i32 font_size, Color color){
     DrawText(text, textx, texty, font_size, color);
 }
 
-void draw_checkmated(){
+void draw_end_screen(){
     i32 king_index = find_piece(blacks_turn, KING);
     draw_square_by_index(king_index, MATE_HIGHLIGHT);
     DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, MATE_TINT);
-    char text[20];
-    sprintf(text, "%s Won", blacks_turn ? "White" : "Black");
-    draw_text_centered(text, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 120, blacks_turn ? WHITE_WON_TEXT : BLACK_WON_TEXT);
-    draw_text_centered("Press ENTER to restart", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 120, 40, blacks_turn ? WHITE_WON_TEXT : BLACK_WON_TEXT);
+    char* text = (game_state == CHECKMATE) ? (blacks_turn ? "White Won" : "Black Won") : "Draw";
+    Color color = (game_state == CHECKMATE) ? (blacks_turn ? WHITE_WON_COLOR : BLACK_WON_COLOR) : DRAW_COLOR;
+    draw_text_centered(text, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 120, color);
+    draw_text_centered("Press ENTER to restart", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 120, 40, color);
 }
 
 void draw_init(){
@@ -260,12 +266,14 @@ void draw_init(){
     draw_board_to_texture();
 }
 
-void draw_clean(){
+void clean_draw(){
     for(i32 i = 0; i < CCOLOR_COUNT; i++){
         for(i32 j = PAWN; j < PIECE_COUNT; j++){
             UnloadTexture(piece_textures[i][j]);
         }
     }
+
+    UnloadRenderTexture(board_texture);
 
     UnloadSound(capture_sound);
     UnloadSound(move_sound);
@@ -317,10 +325,12 @@ void clear_arrows(){
 }
 
 void end_turn(){
-    blacks_turn = !blacks_turn;
-    setup_turn();
     if(is_checkmate(blacks_turn)){
-        checkmated = true;
+        game_state = CHECKMATE;
+        PlaySound(notify_sound);
+        return;
+    }else if(is_draw()){
+        game_state = DRAW;
         PlaySound(notify_sound);
         return;
     }
@@ -356,7 +366,7 @@ bool move_is_enpassant(piece_t piece, i32 from, i32 to){
     if(diff != 7 && diff != 9){
         return false;
     }
-    return !piece_at(to, PAWN);
+    return !check_index_piece(to, PAWN);
 }
 bool move_is_castling(piece_t piece, i32 from, i32 to){
     if(piece != KING){
@@ -366,7 +376,7 @@ bool move_is_castling(piece_t piece, i32 from, i32 to){
     return diff == 3 || diff == 2;
 }
 
-void do_move(i32 new_index){
+void play_move(i32 new_index){
     if(get_bit(colors[!blacks_turn], new_index)){
         PlaySound(capture_sound);
     }else{
@@ -376,37 +386,33 @@ void do_move(i32 new_index){
     last_turn[0] = selected_index;
     last_turn[1] = new_index;
 
+    move_t move = 0;
+    move_set_color(move, blacks_turn);
+    move_set_type(move, index_occupied(new_index) ? CAPTURE : MOVE);
+    move_set_piece(move, selected_piece);
+    move_set_from(move, selected_index);
+    move_set_to(move, new_index);
+
     if(move_is_castling(selected_piece, selected_index, new_index)){
-        if(new_index < selected_index){
-            move_piece(blacks_turn, ROOK, new_index - 1, new_index + 1);
+        move_set_type(move, CASTLING);
+        i32 dir = sign(new_index - selected_index);
+        move_set_spec1(move, new_index + dir);
+        move_set_spec2(move, new_index - dir);
+    }
+    
+    if(selected_piece == PAWN){
+        if(move_is_enpassant(selected_piece, selected_index, new_index)){
+            move_set_type(move, ENPASSANT);
+            move_set_spec1(move, new_index + 8 * sign(selected_index - new_index));
+        }else if(move_is_double_pawn_move(selected_piece, selected_index, new_index)){
+            move_set_type(move, DOUBLE_PUSH);
+            move_set_spec1(move, (selected_index + ((new_index - selected_index) >> 1)));
         }else{
-            move_piece(blacks_turn, ROOK, new_index + 1, new_index - 1);
+            move_set_type(move, PUSH);
         }
     }
 
-    if(selected_piece == KING){
-        lost_castling_rights[blacks_turn][CASTLE_OOO] = true;
-        lost_castling_rights[blacks_turn][CASTLE_OO] = true;
-    }
-    if(selected_piece == ROOK){
-        if(selected_index == 0 || selected_index == 56){
-            lost_castling_rights[blacks_turn][CASTLE_OOO] = true;
-        }
-        else if(selected_index == 7 || selected_index == 63){
-            lost_castling_rights[blacks_turn][CASTLE_OO] = true;
-        }
-    }
-
-    if(move_is_enpassant(selected_piece, selected_index, new_index)){
-        clear_piece(!blacks_turn, PAWN, new_index + 8 * sign(selected_index - new_index));
-    }
-
-    memset(enpassantable, 0, sizeof(enpassantable));
-    if(move_is_double_pawn_move(selected_piece, selected_index, new_index)){
-        enpassantable[blacks_turn] |= (1ull << (selected_index + ((new_index - selected_index) >> 1)));
-    }
-
-    move_piece(blacks_turn, selected_piece, selected_index, new_index);
+    do_move(move);
 
     end_turn();
 
@@ -414,13 +420,12 @@ void do_move(i32 new_index){
 }
 
 void restart_game(){
-    checkmated = false;
+    game_state = GAME;
     blacks_turn = false;
     arrows_count = 0;
     last_turn[0] = NUL_INDEX;
     last_turn[1] = NUL_INDEX;
-    setup_board();
-    setup_turn();
+    chess_reset();
 }
 
 void poll_events(){
@@ -430,12 +435,10 @@ void poll_events(){
     mouse_right = IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
     hover_index = position_to_index(mouse_x, mouse_y);
 
-    if(checkmated){
+    if(game_state != GAME){
         if(IsKeyPressed(KEY_ENTER)){
-            if(checkmated){
-                PlaySound(notify_sound);
-                restart_game();
-            }   
+            PlaySound(notify_sound);
+            restart_game(); 
         }
         return;
     }
@@ -467,7 +470,7 @@ void poll_events(){
         if(in_promotion){
             for(i32 i = 0; i < 4; i++){
                 if(hover_index == promotion_indexes[i]){
-                    do_move(promoted_to);
+                    play_move(promoted_to);
                     promote(blacks_turn, promoted_to, promotion_pieces[i]);
                     break;
                 }
@@ -476,7 +479,7 @@ void poll_events(){
             deselect_piece();
         }else if(is_piece_selected() && new_index != selected_index && can_move(new_index)){
             if(!check_enter_promotion(new_index)){
-                do_move(new_index);
+                play_move(new_index);
             }
         }else{
             select_piece(new_index);
@@ -485,7 +488,7 @@ void poll_events(){
     if(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)){
         if(is_piece_dragging() && new_index != selected_index && can_move(new_index)){
             if(!check_enter_promotion(new_index)){
-                do_move(new_index);
+                play_move(new_index);
             }
         }
         dragged_piece = NO_PIECE;
@@ -512,12 +515,12 @@ void chess_run(){
             draw_arrows();
             draw_promotion();
 
-            if(checkmated){
-                draw_checkmated();
+            if(game_state != GAME){
+                draw_end_screen();
             }
 
         EndDrawing();
     }
 
-    draw_clean();
+    clean_draw();
 }
