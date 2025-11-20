@@ -358,7 +358,16 @@ bool move_is_double_pawn_move(piece_t piece, i32 from, i32 to){
     i32 diff = abs(to - from);
     return diff == 16;
 }
-bool move_is_enpassant(piece_t piece, i32 from, i32 to){
+bool move_is_promotion(piece_t piece, i32 from, i32 to){
+    if(piece != PAWN){
+        return false;
+    }
+    u64 mask_from = 1ull << from;
+    u64 mask_to   = 1ull << to;
+    return ( blacks_turn && (RANK_2 & mask_from) && (RANK_1 & mask_to))
+         | (!blacks_turn && (RANK_7 & mask_from) && (RANK_8 & mask_to));
+}
+bool move_is_enpassant(u64 board, piece_t piece, i32 from, i32 to){
     if(piece != PAWN){
         return false;
     }
@@ -366,7 +375,7 @@ bool move_is_enpassant(piece_t piece, i32 from, i32 to){
     if(diff != 7 && diff != 9){
         return false;
     }
-    return !check_index_piece(to, PAWN);
+    return !index_occupied2(board, to);
 }
 bool move_is_castling(piece_t piece, i32 from, i32 to){
     if(piece != KING){
@@ -376,19 +385,16 @@ bool move_is_castling(piece_t piece, i32 from, i32 to){
     return diff == 3 || diff == 2;
 }
 
-void play_move(i32 new_index){
-    if(get_bit(colors[!blacks_turn], new_index)){
-        PlaySound(capture_sound);
-    }else{
-        PlaySound(move_sound);
-    }
-    
+void play_move(i32 new_index, i32 arg){
     last_turn[0] = selected_index;
     last_turn[1] = new_index;
 
+    bool capture = index_occupied2(all_pieces, new_index);
+    bool enpassant = move_is_enpassant(all_pieces, selected_piece, selected_index, new_index);
+
     move_t move = 0;
     move_set_color(move, blacks_turn);
-    move_set_type(move, index_occupied(new_index) ? CAPTURE : MOVE);
+    move_set_type(move, capture ? CAPTURE : MOVE);
     move_set_piece(move, selected_piece);
     move_set_from(move, selected_index);
     move_set_to(move, new_index);
@@ -401,7 +407,10 @@ void play_move(i32 new_index){
     }
     
     if(selected_piece == PAWN){
-        if(move_is_enpassant(selected_piece, selected_index, new_index)){
+        if(move_is_promotion(selected_piece, selected_index, new_index)){
+            move_set_type(move, PROMOTION);
+            move_set_spec1(move, arg);
+        }else if(enpassant){
             move_set_type(move, ENPASSANT);
             move_set_spec1(move, new_index + 8 * sign(selected_index - new_index));
         }else if(move_is_double_pawn_move(selected_piece, selected_index, new_index)){
@@ -417,6 +426,12 @@ void play_move(i32 new_index){
     end_turn();
 
     deselect_piece();
+
+    if(capture || enpassant){
+        PlaySound(capture_sound);
+    }else{
+        PlaySound(move_sound);
+    }
 }
 
 void restart_game(){
@@ -470,8 +485,8 @@ void poll_events(){
         if(in_promotion){
             for(i32 i = 0; i < 4; i++){
                 if(hover_index == promotion_indexes[i]){
-                    play_move(promoted_to);
-                    promote(blacks_turn, promoted_to, promotion_pieces[i]);
+                    play_move(promoted_to, promotion_pieces[i]);
+                    //promote(blacks_turn, promoted_to, promotion_pieces[i]);
                     break;
                 }
             }
@@ -479,7 +494,7 @@ void poll_events(){
             deselect_piece();
         }else if(is_piece_selected() && new_index != selected_index && can_move(new_index)){
             if(!check_enter_promotion(new_index)){
-                play_move(new_index);
+                play_move(new_index, 0);
             }
         }else{
             select_piece(new_index);
@@ -488,7 +503,7 @@ void poll_events(){
     if(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)){
         if(is_piece_dragging() && new_index != selected_index && can_move(new_index)){
             if(!check_enter_promotion(new_index)){
-                play_move(new_index);
+                play_move(new_index, 0);
             }
         }
         dragged_piece = NO_PIECE;

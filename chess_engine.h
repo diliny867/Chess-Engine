@@ -18,7 +18,9 @@
 i32 piece_values[PIECE_COUNT] = { PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_VALUE, QUEEN_VALUE, KING_VALUE };
 
 
-i32 evaluate_board() {
+i32 evaluate_position(position_t* pos) {
+    u64* pieces = pos->pieces;
+    u64* colors = pos->colors;
     i32 value = 0;
     u64 white_mask, black_mask;
     i32 piece_count;
@@ -31,19 +33,36 @@ i32 evaluate_board() {
     return value;
 }
 
+move_t moves[MAX_MOVES] = { 0 };
 
-i32 maxi(position_t pos, i32 depth){
+
+i32 mini(position_t* pos, i32 depth);
+
+i32 maxi(position_t* pos, i32 depth){
     if(depth == 0){
-        return evaluate_board();
+        return evaluate_position(pos);
     }
-    i32 max = -INF_VALUE;
-    
+    i32 score, max = -INF_VALUE;
+    i32 moves_count = get_moves(pos, moves);
+    for(i32 i = 0; i < moves_count; i++){
+        score = mini(pos, depth - 1);
+        if(score > max){
+            max = score;
+        }
+    }
+    return max;
 }
 
-i32 mini(position_t pos, i32 depth){
+i32 mini(position_t* pos, i32 depth){
     if(depth == 0){
-        return -evaluate_board();
+        return -evaluate_position(pos);
     }
-    i32 min = INF_VALUE;
-
+    i32 score, min = INF_VALUE;
+    i32 moves_count = get_moves(pos, moves);
+    for(i32 i = 0; i < moves_count; i++){
+        score = mini(pos, depth - 1);
+        if(score < min){
+            min = score;
+        }
+    }
 }

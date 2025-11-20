@@ -90,7 +90,13 @@ typedef enum{
 
 #define lsb_zeros(val) __builtin_ctzll(val)
 #define bit_count(val) __builtin_popcountll(val)
-#define zero_array(val) memset(val, 0, sizeof(val))
+#define zero_array(arr) memset(arr, 0, sizeof(arr))
+#define zero_array_count(arr, count) memset(arr, 0, sizeof((arr)[0]) * (count))
+#define copy_array(dst, src) memcpy(dst, src, sizeof(src))
+#define compare_array(arr1, arr2) memcmp(arr1, arr2, sizeof(arr1))
+#define array_element_equals(arr1, index, elem) (memcmp(arr1 + index, &elem, sizeof(elem)) == 0)
+
+#define memclear(dst, size) memset(dst, 0, size);
 
 #define sign(val) (((val) > 0) - ((val) < 0))
 
@@ -150,11 +156,12 @@ bool draw_flag = false;
 
 
 typedef enum {
-    MOVE,
+    MOVE = 1,
     CAPTURE,
     PUSH,
     DOUBLE_PUSH,
     ENPASSANT,
+    PROMOTION,
     CASTLING
 } move_type_e;
 // typedef struct { // can compress it to one int
@@ -176,33 +183,43 @@ typedef enum {
 //         } castling;
 //     };
 // } move_t;
-typedef u64 move_t;
-// bits: from: 6 bits  to: 6 bits  type: 3 bits  color: 1 bit  piece: 3 bits  spec1: 3 bits  spec2: 3 bits
+
+// total bits: 31  from: 6 bits  to: 6 bits  type: 3 bits  color: 1 bit  piece: 3 bits  spec1: 6 bits  spec2: 6 bits
+typedef u32 move_t;
 typedef enum {
-    MOVE_FROM_BIT  = 0x3F,      // 0x3F << 0
-    MOVE_TO_BIT    = 0xFC0,     // 0x3F << 6
-    MOVE_TYPE_BIT  = 0x7000,    // 0x7 << 12
-    MOVE_COLOR_BIT = 0x8000,    // 0x1 << 15
-    MOVE_PIECE_BIT = 0x70000,   // 0x7 << 16
-    MOVE_SPEC1_BIT = 0x380000,  // 0x7 << 19
-    MOVE_SPEC2_BIT = 0x1C00000, // 0x7 << 22
-} move_bits;
+    MOVE_FROM_POS  = 0,
+    MOVE_TO_POS    = 6,
+    MOVE_TYPE_POS  = 12,
+    MOVE_COLOR_POS = 15,
+    MOVE_PIECE_POS = 16,
+    MOVE_SPEC1_POS = 19,
+    MOVE_SPEC2_POS = 25,
+} move_bits_pos_e;
+typedef enum {
+    MOVE_FROM_BIT  = 0x3F,       // 0x3F << 0
+    MOVE_TO_BIT    = 0xFC0,      // 0x3F << 6
+    MOVE_TYPE_BIT  = 0x7000,     // 0x7  << 12
+    MOVE_COLOR_BIT = 0x8000,     // 0x1  << 15
+    MOVE_PIECE_BIT = 0x70000,    // 0x7  << 16
+    MOVE_SPEC1_BIT = 0x1F80000,  // 0x3F << 19
+    MOVE_SPEC2_BIT = 0x7E000000, // 0x3F << 25
+} move_bits_e;
 
-#define move_get_from( move)  (((move) >> 0ull)  & 0x3F)
-#define move_get_to(   move)  (((move) >> 6ull)  & 0x3F)
-#define move_get_type( move)  (((move) >> 12ull) & 0x7)
-#define move_get_color(move)  (((move) >> 15ull) & 0x1)
-#define move_get_piece(move)  (((move) >> 16ull) & 0x7)
-#define move_get_spec1(move)  (((move) >> 19ull) & 0x7)
-#define move_get_spec2(move)  (((move) >> 22ull) & 0x7)
+#define move_get_from( move)  (((move) >> MOVE_FROM_POS)  & 0x3F)
+#define move_get_to(   move)  (((move) >> MOVE_TO_POS)    & 0x3F)
+#define move_get_type( move)  (((move) >> MOVE_TYPE_POS)  & 0x7)
+#define move_get_color(move)  (((move) >> MOVE_COLOR_POS) & 0x1)
+#define move_get_piece(move)  (((move) >> MOVE_PIECE_POS) & 0x7)
+#define move_get_spec1(move)  (((move) >> MOVE_SPEC1_POS) & 0x3F)
+#define move_get_spec2(move)  (((move) >> MOVE_SPEC2_POS) & 0x3F)
 
-#define move_set_from( move, val)  ((move) = ((move) & ~MOVE_FROM_BIT)  | ((u64)(val) << 0ull))
-#define move_set_to(   move, val)  ((move) = ((move) & ~MOVE_TO_BIT)    | ((u64)(val) << 6ull))
-#define move_set_type( move, val)  ((move) = ((move) & ~MOVE_TYPE_BIT)  | ((u64)(val) << 12ull))
-#define move_set_color(move, val)  ((move) = ((move) & ~MOVE_COLOR_BIT) | ((u64)(val) << 15ull))
-#define move_set_piece(move, val)  ((move) = ((move) & ~MOVE_PIECE_BIT) | ((u64)(val) << 16ull))
-#define move_set_spec1(move, val)  ((move) = ((move) & ~MOVE_SPEC1_BIT) | ((u64)(val) << 19ull))
-#define move_set_spec2(move, val)  ((move) = ((move) & ~MOVE_SPEC2_BIT) | ((u64)(val) << 22ull))
+#define move_set_from( move, val)  ((move) = ((move) & ~MOVE_FROM_BIT)  | ((u32)(val) << MOVE_FROM_POS))
+#define move_set_to(   move, val)  ((move) = ((move) & ~MOVE_TO_BIT)    | ((u32)(val) << MOVE_TO_POS))
+#define move_set_type( move, val)  ((move) = ((move) & ~MOVE_TYPE_BIT)  | ((u32)(val) << MOVE_TYPE_POS))
+#define move_set_color(move, val)  ((move) = ((move) & ~MOVE_COLOR_BIT) | ((u32)(val) << MOVE_COLOR_POS))
+#define move_set_piece(move, val)  ((move) = ((move) & ~MOVE_PIECE_BIT) | ((u32)(val) << MOVE_PIECE_POS))
+#define move_set_spec1(move, val)  ((move) = ((move) & ~MOVE_SPEC1_BIT) | ((u32)(val) << MOVE_SPEC1_POS))
+#define move_set_spec2(move, val)  ((move) = ((move) & ~MOVE_SPEC2_BIT) | ((u32)(val) << MOVE_SPEC2_POS))
 
 
 typedef struct {
@@ -410,9 +427,39 @@ void fill_rays_table(){
     }
 }
 
+void maybe_remove_castling_rights(bool black, piece_t piece, i32 from){
+    if(piece == KING){
+        lost_castling_rights[black][CASTLE_OOO] = true;
+        lost_castling_rights[black][CASTLE_OO] = true;
+    }
+    if(piece == ROOK){
+        if(from == 0 || from == 56){
+            lost_castling_rights[black][CASTLE_OOO] = true;
+        }
+        else if(from == 7 || from == 63){
+            lost_castling_rights[black][CASTLE_OO] = true;
+        }
+    }
+}
+void maybe_remove_castling_rights2(bool black, bool** lost_castling_rights, piece_t piece, i32 from){
+    if(piece == KING){
+        lost_castling_rights[black][CASTLE_OOO] = true;
+        lost_castling_rights[black][CASTLE_OO] = true;
+    }
+    if(piece == ROOK){
+        if(from == 0 || from == 56){
+            lost_castling_rights[black][CASTLE_OOO] = true;
+        }
+        else if(from == 7 || from == 63){
+            lost_castling_rights[black][CASTLE_OO] = true;
+        }
+    }
+}
+
 // resets on pawn move, capture, castling
 void reset_draw_timer(){
-    memset(draw_counts, 0, sizeof(draw_counts[0]) * draw_positions_count);
+    zero_array_count(draw_counts, draw_positions_count);
+    draw_positions_count = 0;
     draw_timer = 0;
 }
 bool push_draw_position(bool black){ // return true if draw
@@ -420,11 +467,11 @@ bool push_draw_position(bool black){ // return true if draw
         return true;
     }
     draw_position_t draw_position;
-    memcpy(draw_position.pieces, pieces, sizeof(pieces));
-    memcpy(draw_position.colors, colors, sizeof(colors));
+    copy_array(draw_position.pieces, pieces);
+    copy_array(draw_position.colors, colors);
     draw_position.enpassantable = enpassantable[black];
     for(i32 i = (i32)black; i < draw_positions_count; i += 2){
-        if(memcmp(&draw_positions[i], &draw_position, sizeof(draw_position_t))){
+        if(array_element_equals(draw_positions, i, draw_position)){
             draw_counts[i]++;
             return draw_counts[i] >= 2; // 2 because we dont increment when pushing new position
         }
@@ -449,6 +496,9 @@ force_inline u64 queen_moves(u64 board, i32 index){
 
 force_inline bool index_occupied(i32 index){
     return get_bit(all_pieces, index);
+}
+force_inline bool index_occupied2(u64 board, i32 index){
+    return get_bit(board, index);
 }
 
 force_inline i32 find_piece(bool black, piece_t piece){
@@ -484,11 +534,31 @@ force_inline void clear_piece(bool black, piece_t piece, i32 index){
     clear_bit(pieces[piece], index);
     clear_bit(colors[black], index);
 }
+force_inline void clear_piece2(bool black, u64* pieces, u64* colors, piece_t piece, i32 index){
+    clear_bit(pieces[piece], index);
+    clear_bit(colors[black], index);
+}
 force_inline void put_piece(bool black, piece_t piece, i32 index){
     put_bit(pieces[piece], index);
     put_bit(colors[black], index);
 }
+force_inline void put_piece2(bool black, u64* pieces, u64* colors, piece_t piece, i32 index){
+    put_bit(pieces[piece], index);
+    put_bit(colors[black], index);
+}
 force_inline void move_piece(bool black, piece_t piece, i32 from, i32 to){
+    u64 from_mask = 1ull << from;
+    u64 to_mask   = 1ull << to;
+    clear_bits(pieces[piece], from_mask);
+    clear_bits(colors[black], from_mask);
+    clear_bits(colors[!black], to_mask);
+    for(i32 i = 0; i < PIECE_COUNT; i++){
+        clear_bits(pieces[i], to_mask);
+    }
+    put_bits(pieces[piece], to_mask);
+    put_bits(colors[black], to_mask);
+}
+force_inline void move_piece3(bool black, u64* pieces, u64* colors, piece_t piece, i32 from, i32 to){
     u64 from_mask = 1ull << from;
     u64 to_mask   = 1ull << to;
     clear_bits(pieces[piece], from_mask);
@@ -760,12 +830,24 @@ force_inline void calculate_all_attacks(){
 }
 
 // check if we can castle, then check with if all necessary for castling squares are free (at ==), then choose those squares (at *), then choose position 
-force_inline u64 get_castling_mask(bool black, bool castle_type){ // castling dont care if pinned piece cant go to attack, it still doest work, so can use pseudo attacks 
-    return (!lost_castling_rights[black][castle_type] && ((castle_masks[black][castle_type] & empties & ~all_pseudo_attacks[!black]) == castle_masks[black][castle_type])) 
+force_inline u64 get_castling_mask(bool black, bool castle_type, u64 empties, u64 attacks){ // castling dont care if pinned piece cant go to attack, it still doest work, so can use pseudo attacks 
+    return (!lost_castling_rights[black][castle_type] && ((castle_masks[black][castle_type] & empties & ~attacks) == castle_masks[black][castle_type])) 
            * castle_pos[black][castle_type];
 }
 
-u64 get_legal_turns(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
+u64 get_pseudo_legal_turns(bool black, u64 piece_mask, piece_t piece){
+    u64 color_pieces = colors[black];
+
+    u64 mask = get_pseudo_legal_attack(black, piece_mask, piece);
+    if(piece == PAWN){
+        mask |= pawns_steps(black, piece_mask);
+    }else if(piece == KING){
+        mask |= (get_castling_mask(black, CASTLE_OOO, empties, all_pseudo_attacks[!black])
+             |   get_castling_mask(black, CASTLE_OO, empties, all_pseudo_attacks[!black])) & ~color_pieces;
+    }
+    return mask;
+}
+u64 get_legal_turns(bool black, u64 piece_mask, piece_t piece){
     u64 color_pieces = colors[black];
     u64 pinned = pinneds[black] & pieces[piece];
     u64 pinned_mask = pinned_masks[black];
@@ -777,8 +859,8 @@ u64 get_legal_turns(bool black, u64 piece_mask, piece_t piece){ //todo: add pins
         mask |= (pawns_steps(black, nonpinned)
              |   pawns_steps(black, pinned) & pinned_mask) & check_mask;
     }else if(piece == KING && !in_check(black, all_pseudo_attacks[!black])){
-        mask |= (get_castling_mask(black, CASTLE_OOO)
-             |   get_castling_mask(black, CASTLE_OO)) & ~color_pieces;
+        mask |= (get_castling_mask(black, CASTLE_OOO, empties, all_pseudo_attacks[!black])
+             |   get_castling_mask(black, CASTLE_OO, empties, all_pseudo_attacks[!black])) & ~color_pieces;
     }
     return mask;
 }
@@ -831,6 +913,10 @@ force_inline void promote(bool black, i32 index, piece_t piece){
     clear_bit(pieces[PAWN], index);
     put_bit(pieces[piece], index);
 }
+force_inline void promote2(bool black, u64* pieces, i32 index, piece_t piece){
+    clear_bit(pieces[PAWN], index);
+    put_bit(pieces[piece], index);
+}
 
 void setup_next_turn(){
     all_pieces = colors[CWHITE] | colors[CBLACK];
@@ -838,26 +924,171 @@ void setup_next_turn(){
     calculate_all_attacks();
 }
 
-// returns move count
-i32 get_moves(position_t pos, move_t* moves){
-    return 0;
+force_inline move_t create_move(bool black, i32 from, i32 to, move_type_e move_type, piece_t piece, i32 spec1, i32 spec2){
+    return (move_t)(from  << MOVE_FROM_POS  | to    << MOVE_TO_POS    | move_type << MOVE_TYPE_POS 
+                  | black << MOVE_COLOR_POS | piece << MOVE_PIECE_POS 
+                  | spec1 << MOVE_SPEC1_POS | spec2 << MOVE_SPEC2_POS);
 }
 
+i32 fill_piece_pseudo_legal_moves(position_t* pos, i32 from, piece_t piece, move_t* moves, i32 move_count){
+    bool black = pos->blacks_turn;
+    u64 color_pieces = pos->colors[black];
+    u64 other_pieces = pos->colors[!black];
+    u64 all_pieces = color_pieces | other_pieces;
+    u64 piece_mask = 1ull << from;
 
-void remove_castling_rights(bool black, piece_t piece, i32 from){
-    if(piece == KING){
-        lost_castling_rights[black][CASTLE_OOO] = true;
-        lost_castling_rights[black][CASTLE_OO] = true;
+    move_type_e move_type = MOVE;
+    i32 index, spec = 0;
+    u64 mask = get_pseudo_legal_attack(black, piece_mask, piece);
+    while(mask){
+        index = extract_piece(&mask);
+        if(index_occupied2(all_pieces, index)){
+            move_type = CAPTURE;
+        }else{
+            if(piece == PAWN){
+                move_type = ENPASSANT;
+                spec = from + (sign(from - index) << 3); // todo: this
+            }
+        }
+        moves[move_count++] = create_move(black, from, index, move_type, piece, spec, 0);
     }
-    if(piece == ROOK){
-        if(from == 0 || from == 56){
-            lost_castling_rights[black][CASTLE_OOO] = true;
+
+    if(piece == PAWN){
+        move_type = PUSH;
+        mask = pawns_steps(black, piece_mask);
+        while(mask) {
+            index = extract_piece(&mask);
+            if(abs(from - index) != 8){
+                move_type = DOUBLE_PUSH;
+            }
+            moves[move_count++] = create_move(black, from, index, move_type, piece, 0, 0);
         }
-        else if(from == 7 || from == 63){
-            lost_castling_rights[black][CASTLE_OO] = true;
+    }else if(piece == KING){
+        move_type = CASTLING;
+        mask = get_castling_mask(black, CASTLE_OOO, empties, 0) & ~color_pieces;
+        while(mask) {
+            index = extract_piece(&mask);
+            moves[move_count++] = create_move(black, from, index, move_type, piece, index - 1, index + 1);
         }
+        mask = get_castling_mask(black, CASTLE_OO, empties, 0) & ~color_pieces;
+        while(mask) {
+            index = extract_piece(&mask);
+            moves[move_count++] = create_move(black, from, index, move_type, piece, index + 1, index - 1);
         }
+    }
+    return move_count;
 }
+
+i32 fill_pseudo_legal_moves(position_t* pos, move_t* moves){
+    u64 color_pieces = pos->colors[pos->blacks_turn];
+    u64* pieces = pos->pieces;
+    u64 piece_mask;
+    i32 index, move_count = 0;
+    for(i32 i = 0; i < PIECE_COUNT; i++){
+        piece_mask = pieces[i] & color_pieces;
+        while(piece_mask){
+            index = extract_piece(&piece_mask);
+            move_count = fill_piece_pseudo_legal_moves(pos, index, i, moves, move_count);
+        }
+    }
+    return move_count;
+}
+
+// returns move count
+i32 get_moves(position_t* pos, move_t* moves){
+    return fill_pseudo_legal_moves(pos, moves);
+}
+
+bool is_move_legal(position_t* pos, move_t move){
+    return true;
+}
+
+void position_do_move(position_t* pos, move_t move){
+    bool black = pos->blacks_turn;
+    u64* pieces = pos->pieces;
+    u64* colors = pos->colors;
+    piece_t piece = move_get_piece(move);
+    i32 from = move_get_from(move);
+    i32 to = move_get_to(move);
+    move_type_e move_type = move_get_type(move);
+
+    move_piece3(black, pieces, colors, piece, from, to);
+
+    memclear(pos->enpassantable, sizeof(u64) * 2); //clear both enpassantables, to show correct moves for other color
+    switch(move_type) {
+    case MOVE:
+        maybe_remove_castling_rights2(black, (bool**)pos->lost_castling_rights, piece, from);
+        // if(push_draw_position(black)){
+        //     draw_flag = true;
+        // }
+        break;
+    case CAPTURE:
+        maybe_remove_castling_rights2(black, (bool**)pos->lost_castling_rights, piece, from);
+        // reset_draw_timer();
+        // if(detect_draw(black)){
+        //     draw_flag = true;
+        // }
+        break;
+    case PUSH:
+        // reset_draw_timer();
+        break;
+    case DOUBLE_PUSH:
+        // reset_draw_timer();
+        put_bit(enpassantable[black], move_get_spec1(move));
+        break;
+    case ENPASSANT:
+        // reset_draw_timer();
+        clear_piece2(!black, pieces, colors, PAWN, move_get_spec1(move));
+        break;
+    case PROMOTION:
+        // reset_draw_timer();
+        promote2(black, pieces, to, move_get_spec1(move));
+        break;
+    case CASTLING:
+        // reset_draw_timer();
+        move_piece3(black, pieces, colors, ROOK, move_get_spec1(move), move_get_spec2(move));
+        break;
+    }
+
+    pos->blacks_turn = !pos->blacks_turn;
+
+    // setup_next_turn();
+}
+
+void position_undo_move(position_t* pos, move_t move){
+    bool black = pos->blacks_turn;
+    u64* pieces = pos->pieces;
+    u64* colors = pos->colors;
+    piece_t piece = move_get_piece(move);
+    i32 from = move_get_from(move);
+    i32 to = move_get_to(move);
+    move_type_e move_type = move_get_type(move);
+
+    switch(move_type){
+    case MOVE:
+
+        break;
+    case CAPTURE:
+
+        break;
+    case PUSH:
+
+        break;
+    case DOUBLE_PUSH:
+
+        break;
+    case ENPASSANT:
+
+        break;
+    case PROMOTION:
+
+        break;
+    case CASTLING:
+        
+        break;
+    }
+}
+
 void do_move(move_t move){
     bool black = move_get_color(move);
     piece_t piece = move_get_piece(move);
@@ -867,16 +1098,16 @@ void do_move(move_t move){
 
     move_piece(black, piece, from, to);
 
-    memset(enpassantable, 0, sizeof(enpassantable)); //clear both enpassantables, to show correct moves for other color
+    zero_array(enpassantable); //clear both enpassantables, to show correct moves for other color
     switch(move_type) {
     case MOVE:
-        remove_castling_rights(black, piece, from);
+        maybe_remove_castling_rights(black, piece, from);
         if(push_draw_position(black)){
             draw_flag = true;
         }
         break;
     case CAPTURE:
-        remove_castling_rights(black, piece, from);
+        maybe_remove_castling_rights(black, piece, from);
         reset_draw_timer();
         if(detect_draw(black)){
             draw_flag = true;
@@ -893,6 +1124,10 @@ void do_move(move_t move){
         reset_draw_timer();
         clear_piece(!black, PAWN, move_get_spec1(move));
         break;
+    case PROMOTION:
+        reset_draw_timer();
+        promote(black, to, move_get_spec1(move));
+        break;
     case CASTLING:
         reset_draw_timer();
         move_piece(black, ROOK, move_get_spec1(move), move_get_spec2(move));
@@ -905,18 +1140,20 @@ void do_move(move_t move){
 }
 
 void clear_board(){
-    memset(pieces, 0, sizeof(pieces));
-    memset(colors, 0, sizeof(colors));
-    memset(lost_castling_rights, 0, sizeof(lost_castling_rights));
-    memset(pinneds, 0, sizeof(pinneds));
-    memset(pinned_masks, 0, sizeof(pinned_masks));
-    memset(check_masks, 0, sizeof(check_masks));
-    memset(attacks, 0, sizeof(attacks));
-    memset(all_attacks, 0, sizeof(all_attacks));
-    memset(pseudo_attacks, 0, sizeof(pseudo_attacks));
-    memset(all_pseudo_attacks, 0, sizeof(all_pseudo_attacks));
-    memset(enpassantable, 0, sizeof(enpassantable));
+    zero_array(pieces);
+    zero_array(colors);
+    zero_array(lost_castling_rights);
+    zero_array(pinneds);
+    zero_array(pinned_masks);
+    zero_array(check_masks);
+    zero_array(attacks);
+    zero_array(all_attacks);
+    zero_array(pseudo_attacks);
+    zero_array(all_pseudo_attacks);
+    zero_array(enpassantable);
+    zero_array(draw_counts);
     blacks_turn = false;
+    draw_positions_count = 0;
     draw_timer = 0;
     draw_flag = false;
 }
